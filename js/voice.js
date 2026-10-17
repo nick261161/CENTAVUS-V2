@@ -246,7 +246,7 @@
 
         const chipsWrap = document.createElement('div');
         chipsWrap.className = 'cvv-chips';
-        ['Abrir cartões', 'Quanto gastei este mês?', 'Gastei 45 reais no almoço', 'Paguei 80 na farmácia no crédito', 'Recebi 3000 de salário', 'Como está meu saldo?', 'Ajuda'].forEach(c => {
+        ['Abrir cartões', 'Quanto devo nos cartões?', 'Paguei a fatura do Nubank', 'Gastei 45 reais no almoço', 'Recebi 3000 de salário', 'Como está meu saldo?', 'Ajuda'].forEach(c => {
             const chip = document.createElement('button');
             chip.type = 'button';
             chip.className = 'cvv-chip';
@@ -502,6 +502,111 @@
         return true;
     }
 
+    /* ===================== FATURAS DOS CARTÕES ===================== */
+    /* acha o cartão pelo nome falado ("nubank", "cartão intermedium"…);
+       com 1 cartão só, usa ele sem perguntar */
+    function cvvFindCard(nv) {
+        const list = (typeof cards !== 'undefined' && Array.isArray(cards)) ? cards : [];
+        if (!list.length) return null;
+        let hit = list.find(c => { const n = cvvNorm(c.name); return n.length > 1 && nv.indexOf(n) >= 0; });
+        if (hit) return hit;
+        hit = list.find(c => cvvNorm(c.name).split(/\s+/).some(w => w.length > 2 && nv.indexOf(w) >= 0));
+        return hit || null;
+    }
+
+    function cvvCardByVoice(nv) {
+        const list = (typeof cards !== 'undefined' && Array.isArray(cards)) ? cards : [];
+        if (!list.length) {
+            const msg = 'Você ainda não tem cartões cadastrados. Diga “novo cartão” para cadastrar.';
+            cvvLogAdd('bot', msg); cvvSpeak(msg);
+            return null;
+        }
+        let card = cvvFindCard(nv);
+        if (!card && list.length === 1) card = list[0];
+        if (!card) {
+            const msg = 'Qual cartão? Você tem: ' + list.map(c => c.name).join(', ') + '.';
+            cvvLogAdd('bot', msg); cvvSpeak(msg);
+        }
+        return card;
+    }
+
+    /* "paguei a fatura do Nubank" · "paguei 150 da fatura do Nubank" ·
+       "quitei a fatura" · "baixei 200 na fatura do cartão" */
+    function cvvPayInvoice(text) {
+        const nv = cvvNorm(text);
+        const card = cvvCardByVoice(nv);
+        if (!card) return;
+        const aberta = Math.max(0, round2(Number(card.fatura) || 0));
+        const doMes = Math.max(0, round2((typeof faturaNoMes === 'function') ? faturaNoMes(card) : 0));
+        const devido = round2(Math.max(aberta, doMes));
+        if (!(devido > 0)) {
+            const msg = '“' + card.name + '” não tem fatura em aberto. Tudo em dia por lá.';
+            cvvLogAdd('bot', msg); cvvSpeak(msg);
+            return;
+        }
+        /* valor falado = baixa parcial; sem valor = paga tudo */
+        let valor = cvvExtractNumber(text);
+        if (isNaN(valor)) valor = devido;
+        valor = round2(Math.min(valor, devido));
+        const restante = round2(devido - valor);
+
+        /* mesma baixa do payCard(), só que com o valor dito (parcial permitida) */
+        const ref = (typeof refBase === 'function') ? refBase() : new Date();
+        const refMes = ref.getFullYear() * 12 + ref.getMonth();
+        const hojeMes = new Date().getFullYear() * 12 + new Date().getMonth();
+        const dataPg = (refMes === hojeMes)
+            ? toIso(new Date())
+            : ref.getFullYear() + '-' + pad2(ref.getMonth() + 1) + '-' + pad2(Math.max(1, Math.min(28, Number(card.dueDay) || 1)));
+        card.fatura = round2(Math.max(0, aberta - valor));
+        if (!Array.isArray(card.pagamentos)) card.pagamentos = [];
+        card.pagamentos.unshift({ id: Date.now(), data: dataPg, valor: valor });
+        card.pagamentos = card.pagamentos.slice(0, 60);
+        card.ultimaBaixa = dataPg;
+        persist();
+        if (typeof renderCards === 'function') renderCards();
+        if (typeof refreshCardInvoiceIfOpen === 'function') refreshCardInvoiceIfOpen();
+        if (typeof buildNotifs === 'function') buildNotifs();
+        if (typeof toast === 'function') toast((restante > 0 ? 'Baixa de ' : 'Fatura de ') + money(valor) + (restante > 0 ? ' na fatura de “' : ' paga em “') + card.name + '”.');
+        const txt = (restante > 0)
+            ? 'Baixa de ' + cvvMoneyWords(valor) + ' na fatura de ' + card.name + '. Restam ' + cvvMoneyWords(restante) + '.'
+            : 'Fatura de ' + card.name + ' quitada: ' + cvvMoneyWords(valor) + '.';
+        cvvLogAdd('bot', txt); cvvSpeak(txt);
+    }
+
+    /* "quanto devo nos cartões" · "quais faturas" · "status das faturas" */
+    function cvvInvoiceStatus() {
+        const list = (typeof cards !== 'undefined' && Array.isArray(cards)) ? cards : [];
+        if (!list.length) {
+            const msg = 'Você ainda não tem cartões cadastrados.';
+            cvvLogAdd('bot', msg); cvvSpeak(msg);
+            return;
+        }
+        const abertos = list.filter(c => {
+            const v = Math.max(Number(c.fatura) || 0, (typeof faturaNoMes === 'function') ? faturaNoMes(c) : 0);
+            return v > 0.005;
+        });
+        if (!isPrivacyHidden && abertos.length) {
+            const linhas = abertos.map(c => {
+                const v = Math.max(Number(c.fatura) || 0, (typeof faturaNoMes === 'function') ? faturaNoMes(c) : 0);
+                let quando = '';
+                try {
+                    const di = (typeof dueInfo === 'function') ? dueInfo(c) : null;
+                    if (di) quando = di.days <= 0 ? 'vence hoje' : (di.days === 1 ? 'vence amanhã' : 'vence em ' + di.days + ' dias');
+                } catch (e) {}
+                return c.name + ': ' + cvvMoneyWords(v) + (quando ? ', ' + quando : '');
+            });
+            const total = abertos.reduce((s, c) => s + Math.max(Number(c.fatura) || 0, (typeof faturaNoMes === 'function') ? faturaNoMes(c) : 0), 0);
+            const txt = 'Faturas em aberto: ' + linhas.join('. ') + '. Total de ' + cvvMoneyWords(total) + '.';
+            cvvLogAdd('bot', txt); cvvSpeak(txt);
+        } else if (isPrivacyHidden) {
+            const msg = 'Valores ocultos pelo modo de privacidade. Diga “mostrar valores”.';
+            cvvLogAdd('bot', msg); cvvSpeak(msg);
+        } else {
+            const txt = 'Nenhuma fatura em aberto. Todos os cartões em dia.';
+            cvvLogAdd('bot', txt); cvvSpeak(txt);
+        }
+    }
+
     /* ===================== LANÇAR MOVIMENTAÇÃO POR VOZ ===================== */
     function cvvAddTransaction(text) {
         const nv = cvvNorm(text);
@@ -649,10 +754,11 @@
     function cvvHelp() {
         const txt = 'Você pode falar: “abrir cartões”, “nova transação”, “gastei cinquenta reais no almoço”, ' +
             '“recebi três mil de salário”, “paguei oitenta na farmácia no crédito”, “gastei duzentos em três vezes no cartão”, ' +
+            '“paguei a fatura do Nubank”, “paguei cento e cinquenta da fatura do Nubank”, “quanto devo nos cartões”, ' +
             '“quanto gastei este mês”, “como está meu saldo”, “quanto gastei em alimentação”, ' +
             '“ler notificações”, “mostrar valores”, “ocultar valores” ou “pare de falar”.';
         cvvLogAdd('bot', txt);
-        cvvSpeak('Posso lançar gastos e entradas por voz, com forma de pagamento e parcelas, abrir telas e resumir suas finanças. Veja os exemplos na tela.');
+        cvvSpeak('Posso lançar gastos e entradas por voz, pagar faturas de cartão com valor total ou parcial, abrir telas e resumir suas finanças. Veja os exemplos na tela.');
     }
 
     /* ===================== ROTEADOR DE COMANDOS ===================== */
@@ -738,6 +844,14 @@
         if (/configurac|minha conta|meu perfil|perfil/.test(nv)) {
             if (typeof openSettings === 'function') { openSettings(); const t = 'Abrindo configurações.'; cvvLogAdd('bot', t); cvvSpeak(t); }
             return;
+        }
+
+        /* faturas de cartão — ANTES do fluxo de transação, senão "paguei a fatura"
+           seria capturado como um gasto comum e dobraria o valor */
+        if (/\bfatura\b|faturas/.test(nv) || /\bdevo\b|devendo/.test(nv)) {
+            if (/(pague|pagar|baix|quit|diminu|abat)/.test(nv)) { cvvPayInvoice(text); return; }
+            if (/(abrir|ver|mostrar|mostra|abre|qual|quais|quanto)/.test(nv)) { cvvInvoiceStatus(); return; }
+            cvvInvoiceStatus(); return;
         }
 
         /* lançar movimentação por voz */
