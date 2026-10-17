@@ -22,8 +22,10 @@
 (function () {
 
     /* ===================== ESTADO INTERNO ===================== */
-    let cvvPanel = null, cvvLog = null, cvvInput = null, cvvStatus = null, cvvFab = null;
+    let cvvPanel = null, cvvLog = null, cvvInput = null, cvvStatus = null, cvvFab = null, cvvMicBtn = null;
     let cvvRec = null, cvvListening = false, cvvVoice = null, cvvInited = false, cvvDeniedLogged = false;
+    let cvvMode = 'command';                /* 'command' (FAB) | 'dictation' (mic do campo de texto) */
+    let cvvStream = null;
 
     /* ===================== UTIL ===================== */
     function cvv$(id) { return document.getElementById(id); }
@@ -94,6 +96,54 @@
         cvvStatus.appendChild(s);
     }
 
+    /* ---------- microfone: validação com mensagem clara ---------- */
+    /* Pede o microfone ANTES do reconhecimento só para detectar problema cedo
+       (bloqueado, ausente, em uso) e dar instrução exata. Assim que valida,
+       SOLTAMOS o aparelho — o SpeechRecognition precisa capturá-lo sozinho. */
+    function cvvAskMic() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            return Promise.resolve({
+                ok: false,
+                msg: (location.protocol === 'file:'
+                    ? 'Este navegador não libera o microfone em arquivos locais (file://). Abra pelo atalho "iniciar" ou via http://localhost/https — ou digite o comando abaixo.'
+                    : 'Este navegador não expõe o microfone aqui. Digite o comando abaixo.')
+            });
+        }
+        return navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            /* validou: solta na hora para não brigar com o reconhecimento */
+            try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+            return { ok: true };
+        }).catch(err => {
+            const n = (err && err.name) || '';
+            let msg;
+            if (n === 'NotAllowedError' || n === 'SecurityError' || (err && err.message && /denied/i.test(err.message))) {
+                msg = 'Microfone bloqueado. Clique no cadeado 🔒 na barra de endereço → Microfone → “Permitir” e tente de novo.';
+            } else if (n === 'NotFoundError' || n === 'DevicesNotFoundError') {
+                msg = 'Nenhum microfone encontrado neste aparelho.';
+            } else if (n === 'NotReadableError' || n === 'TrackStartError') {
+                msg = 'O microfone está em uso por outro app (WhatsApp, Teams…). Feche e tente de novo.';
+            } else {
+                msg = 'Não consegui abrir o microfone' + (n ? ' (' + n + ')' : '') + '.';
+            }
+            if (location.protocol === 'file:') {
+                msg += ' Dica: abrir o site via http://localhost ou https deixa o microfone bem mais estável.';
+            }
+            msg += ' Enquanto isso, você pode digitar o comando no campo abaixo.';
+            return { ok: false, msg: msg };
+        });
+    }
+
+    function cvvReleaseMic() {
+        try { if (cvvStream) { cvvStream.getTracks().forEach(t => t.stop()); cvvStream = null; } } catch (e) {}
+    }
+
+    function cvvMicBtnState(active) {
+        if (!cvvMicBtn) return;
+        cvvMicBtn.classList.toggle('cvv-active', !!active);
+        cvvMicBtn.innerHTML = '<i class="fa-solid ' + (active ? 'fa-microphone' : 'fa-microphone-slash') + '"></i>';
+        cvvMicBtn.setAttribute('aria-label', active ? 'Parar de ditar' : 'Ditar comando por voz');
+    }
+
     /* ===================== NÚMEROS POR EXTENSO ===================== */
     const CVV_ONES = { um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9 };
     const CVV_SPECIAL = { dez: 10, onze: 11, doze: 12, treze: 13, quatorze: 14, catorze: 14, quinze: 15, dezesseis: 16, dezessete: 17, dezoito: 18, dezenove: 19 };
@@ -114,9 +164,11 @@
         return any ? total + cur : NaN;
     }
 
-    /* extrai o valor falado/digitado: dígitos ("50,00", "1.234", "3000") ou extenso */
+    /* extrai o valor falado/digitado: dígitos ("50,00", "1.234", "3000") ou extenso.
+       Corta em "vezes/parcelas": "duzentos em três vezes" = R$ 200 em 3x, não 203. */
     function cvvExtractNumber(t) {
-        const m = /(\d[\d.,]*)/.exec(t);
+        const cut = String(t).replace(/\b(em\s+)?(\d+|[a-zà-ú]+)\s*(vezes|vez|parcelas?)\b.*$/i, ' ');
+        const m = /(\d[\d.,]*)/.exec(cut);
         if (m) {
             let raw = m[1].replace(/[^\d.,]/g, '');
             /* formato brasileiro: ponto = milhar, vírgula = decimal */
@@ -125,7 +177,7 @@
             const n = parseFloat(raw);
             if (!isNaN(n) && n > 0) return n;
         }
-        const byWord = cvvNumberFromWords(t);
+        const byWord = cvvNumberFromWords(cut);
         return (!isNaN(byWord) && byWord > 0) ? byWord : NaN;
     }
 
@@ -138,7 +190,7 @@
     };
     const CVV_VERBS_OUT = ['gastei', 'paguei', 'comprei', 'investi', 'doei', 'desembolsei', 'torrei', 'assinalei'];
     const CVV_VERBS_IN = ['recebi', 'ganhei', 'rendeu', 'entrou', 'depositaram', 'reembolsaram', 'reembolsei'];
-    const CVV_FILLER = ['de', 'no', 'na', 'em', 'com', 'para', 'pra', 'o', 'a', 'os', 'as', 'do', 'da', 'dos', 'das', 'meu', 'minha', 'uns', 'umas', 'reais', 'real', 'brl', 'hoje', 'ontem', 'amanha', 'mes', 'mespassado', 'mil', 'e', 'cartao', 'credito', 'debito', 'pix', 'dinheiro'];
+    const CVV_FILLER = ['de', 'no', 'na', 'em', 'com', 'para', 'pra', 'pro', 'pelo', 'pela', 'o', 'a', 'os', 'as', 'do', 'da', 'dos', 'das', 'meu', 'minha', 'uns', 'umas', 'reais', 'real', 'brl', 'hoje', 'ontem', 'amanha', 'mes', 'mespassado', 'mil', 'e', 'cartao', 'credito', 'debito', 'pix', 'dinheiro', 'vezes', 'vez', 'parcela', 'parcelas'];
 
     /* remove uma palavra do texto ORIGINAL preservando acentos e maiúsculas:
        "gastei 45 no almoço" → remove "almoco" mesmo com o "ç"/"ã" do original */
@@ -194,7 +246,7 @@
 
         const chipsWrap = document.createElement('div');
         chipsWrap.className = 'cvv-chips';
-        ['Abrir cartões', 'Quanto gastei este mês?', 'Gastei 45 reais no almoço', 'Recebi 3000 de salário', 'Como está meu saldo?', 'Ajuda'].forEach(c => {
+        ['Abrir cartões', 'Quanto gastei este mês?', 'Gastei 45 reais no almoço', 'Paguei 80 na farmácia no crédito', 'Recebi 3000 de salário', 'Como está meu saldo?', 'Ajuda'].forEach(c => {
             const chip = document.createElement('button');
             chip.type = 'button';
             chip.className = 'cvv-chip';
@@ -208,14 +260,27 @@
         row.className = 'cvv-input-row';
         cvvInput = document.createElement('input');
         cvvInput.type = 'text';
-        cvvInput.placeholder = 'Digite um comando…';
+        cvvInput.placeholder = 'Digite ou dite um comando…';
         cvvInput.setAttribute('aria-label', 'Comando do assistente');
+        /* microfone DENTRO do campo: dita o texto e envia como se fosse digitado */
+        cvvMicBtn = document.createElement('button');
+        cvvMicBtn.type = 'button';
+        cvvMicBtn.className = 'cvv-mic-btn';
+        cvvMicBtn.setAttribute('aria-label', 'Ditar comando por voz');
+        cvvMicBtn.title = 'Ditar comando por voz';
+        cvvMicBtn.innerHTML = '<i class="fa-solid fa-microphone-slash"></i>';
+        cvvMicBtn.addEventListener('click', () => {
+            if (cvvListening && cvvMode === 'dictation') { cvvStopListen(); return; }
+            cvvStopListen();
+            cvvStartListen('dictation');
+        });
         const send = document.createElement('button');
         send.type = 'submit';
         send.className = 'cvv-send';
         send.setAttribute('aria-label', 'Enviar comando');
         send.innerHTML = '<i class="fa-solid fa-paper-plane"></i>';
         row.appendChild(cvvInput);
+        row.appendChild(cvvMicBtn);
         row.appendChild(send);
         row.addEventListener('submit', e => {
             e.preventDefault();
@@ -243,7 +308,7 @@
         cvvStopListen();
     }
     function cvvToggle() {
-        if (cvvPanel.classList.contains('cvv-hidden')) { cvvShow(); cvvStartListen(); }
+        if (cvvPanel.classList.contains('cvv-hidden')) { cvvShow(); cvvStartListen('command'); }
         else cvvHide();
     }
 
@@ -252,13 +317,37 @@
         return window.SpeechRecognition || window.webkitSpeechRecognition || null;
     }
 
-    function cvvStartListen() {
+    /* mode: 'command' = executa direto (FAB) · 'dictation' = escreve no campo de texto */
+    function cvvStartListen(mode) {
+        cvvMode = mode || 'command';
         const Rec = cvvRecClass();
         if (!Rec) {
-            cvvSetStatus('Microfone indisponível aqui — use o campo de texto abaixo.', false);
+            cvvSetStatus('Reconhecimento de voz indisponível neste navegador — digite o comando abaixo.', false);
             return;
         }
         if (cvvListening) return;
+
+        /* valida o microfone primeiro: mensagem clara se estiver bloqueado.
+           IMPORTANTE: depois de validar, SOLTAMOS o stream antes de iniciar o
+           reconhecimento — no Chromium, segurar o microfone aberto (getUserMedia)
+           enquanto o SpeechRecognition tenta capturar faz ele receber SILÊNCIO
+           e nunca transcrever nada. */
+        cvvSetStatus('Preparando o microfone…', false);
+        cvvAskMic().then(res => {
+            if (!res.ok) {
+                cvvSetStatus(res.msg, false);
+                cvvLogAdd('bot', res.msg);
+                return;
+            }
+            /* devolve o aparelho ao reconhecimento (a validação já provou que o mic funciona) */
+            cvvReleaseMic();
+            setTimeout(cvvBeginRecognition, 120);
+        });
+    }
+
+    function cvvBeginRecognition() {
+        const Rec = cvvRecClass();
+        if (!Rec) return;
         try {
             cvvRec = new Rec();
             cvvRec.lang = 'pt-BR';
@@ -269,7 +358,8 @@
             cvvRec.onstart = () => {
                 cvvListening = true;
                 cvvFab.classList.add('cvv-listening');
-                cvvSetStatus('Ouvindo…', true);
+                cvvMicBtnState(cvvMode === 'dictation');
+                cvvSetStatus(cvvMode === 'dictation' ? 'Ditando… fale agora' : 'Ouvindo…', true);
             };
             cvvRec.onresult = (ev) => {
                 let interim = '', final = '';
@@ -278,30 +368,50 @@
                     if (r.isFinal) final += r[0].transcript;
                     else interim += r[0].transcript;
                 }
-                if (interim) cvvSetStatus('“' + interim + '”', true);
-                if (final) cvvRun(final.trim());
+                const shown = (final || interim).trim();
+                if (cvvMode === 'dictation') {
+                    /* ditado: escreve no campo e envia ao final */
+                    if (cvvInput) cvvInput.value = shown;
+                    cvvSetStatus(shown ? '“' + shown + '”' : 'Ditando… fale agora', true);
+                    if (final.trim()) {
+                        const text = final.trim();
+                        if (cvvInput) cvvInput.value = '';
+                        cvvRun(text);
+                    }
+                } else {
+                    if (shown) cvvSetStatus('“' + shown + '”', true);
+                    if (final.trim()) cvvRun(final.trim());
+                }
             };
             cvvRec.onerror = (ev) => {
                 cvvListening = false;
                 cvvFab.classList.remove('cvv-listening');
+                cvvMicBtnState(false);
                 if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
-                    cvvSetStatus('Permissão de microfone negada. Você ainda pode digitar comandos.', false);
+                    cvvSetStatus('Permissão de microfone negada. Libere o microfone (cadeado 🔒 na barra de endereço) ou digite abaixo.', false);
                     if (!cvvDeniedLogged) {
                         cvvDeniedLogged = true;
                         cvvLogAdd('bot', 'Permissão de microfone negada. Libere o microfone nas permissões do navegador ou use o campo de texto.');
                     }
-                } else if (ev.error !== 'no-speech' && ev.error !== 'aborted') {
-                    cvvSetStatus('Não consegui ouvir. Tente de novo.', false);
+                } else if (ev.error === 'network') {
+                    cvvSetStatus('O reconhecimento de voz do Chrome/Edge precisa de internet. Verifique a conexão ou digite abaixo.', false);
+                } else if (ev.error === 'audio-capture') {
+                    cvvSetStatus('Não consegui capturar o áudio. Feche outros apps usando o microfone e tente de novo.', false);
+                } else if (ev.error === 'no-speech') {
+                    cvvSetStatus('Não captei sua voz. Toque no microfone e fale mais perto, com calma.', false);
+                } else if (ev.error !== 'aborted') {
+                    cvvSetStatus('Não consegui ouvir (' + ev.error + '). Tente de novo.', false);
                 }
             };
             cvvRec.onend = () => {
                 cvvListening = false;
                 cvvFab.classList.remove('cvv-listening');
-                if (cvvPanel && !cvvPanel.classList.contains('cvv-hidden')) cvvSetStatus('Ouvir de novo (toque no microfone) ou digite abaixo.', false);
+                cvvMicBtnState(false);
+                if (cvvPanel && !cvvPanel.classList.contains('cvv-hidden')) cvvSetStatus('Toque no microfone para falar de novo, ou digite abaixo.', false);
             };
             cvvRec.start();
         } catch (e) {
-            cvvSetStatus('Não consegui iniciar o microfone.', false);
+            cvvSetStatus('Não consegui iniciar o microfone. Tente de novo.', false);
         }
     }
 
@@ -309,6 +419,8 @@
         try { if (cvvRec) cvvRec.stop(); } catch (e) {}
         cvvListening = false;
         if (cvvFab) cvvFab.classList.remove('cvv-listening');
+        cvvMicBtnState(false);
+        cvvReleaseMic();
     }
 
     /* ===================== RESPOSTAS DO APP ===================== */
@@ -468,16 +580,42 @@
                 ySel.value = String(now.getFullYear());
             }
 
-            /* pagamento padrão: pix (radio já vem marcado; garante após edições antigas) */
-            const pix = document.querySelector('input[name="pay"][value="pix"]');
-            if (pix) pix.checked = true;
-            if (typeof updatePayFields === 'function') updatePayFields();
+            /* forma de pagamento detectada da fala: "no crédito", "no débito",
+               "em dinheiro", "no pix", "no cartão" — só usa pix se nada foi dito */
+            let pay = null;
+            if (/\bcredit[oa]?\b|faturado|parcelad/.test(nv)) pay = 'credito';
+            else if (/\bdebit[oa]?\b/.test(nv)) pay = 'debito';
+            else if (/dinheiro|especie/.test(nv)) pay = 'dinheiro';
+            else if (/\bpix\b/.test(nv)) pay = 'pix';
+            else if (/cartao/.test(nv)) pay = 'credito';   /* "no cartão" sem especificar = crédito */
+            const payRadio = pay ? document.querySelector('input[name="pay"][value="' + pay + '"]') : null;
+            if (payRadio) {
+                payRadio.checked = true;
+                if (typeof updatePayFields === 'function') updatePayFields();
+            }
+
+            /* parcelas ditas: "em 3 vezes", "3x" — vale só para crédito */
+            if (pay === 'credito') {
+                const pm = /(\d+|em\s+\w+)\s*(x\b|vezes)/.exec(nv);
+                if (pm) {
+                    const nParc = Math.round(cvvExtractNumber(pm[1].replace(/^em\s+/, '') || text));
+                    const ps = cvv$('inputParcelas');
+                    if (nParc >= 2 && nParc <= 60 && ps && Array.prototype.some.call(ps.options, o => Number(o.value) === nParc)) {
+                        ps.value = String(nParc);
+                        if (typeof updateInstallHint === 'function') updateInstallHint();
+                    }
+                }
+            }
 
             if (form.requestSubmit) form.requestSubmit();
             else handleAddTransaction(new Event('submit'));
 
+            const payLabel = { credito: 'crédito', debito: 'débito', pix: 'pix', dinheiro: 'dinheiro' }[pay] || '';
+            const parcTxt = (pay === 'credito' && Number(cvv$('inputParcelas') ? cvv$('inputParcelas').value : 1) > 1)
+                ? (' em ' + cvv$('inputParcelas').value + ' vezes') : '';
             const txt = (isIncome ? 'Entrada registrada: ' : 'Gasto registrado: ') + desc + ', ' + cvvMoneyWords(val) +
-                (!isIncome && cat !== 'Outros' && desc !== cat ? ', categoria ' + cat : '') + '.';
+                (!isIncome && cat !== 'Outros' && desc !== cat ? ', categoria ' + cat : '') +
+                (payLabel ? ', pago no ' + payLabel : '') + parcTxt + '.';
             cvvLogAdd('bot', txt);
             cvvSpeak(txt);
         } catch (e) {
@@ -510,10 +648,11 @@
 
     function cvvHelp() {
         const txt = 'Você pode falar: “abrir cartões”, “nova transação”, “gastei cinquenta reais no almoço”, ' +
-            '“recebi três mil de salário”, “quanto gastei este mês”, “como está meu saldo”, “quanto gastei em alimentação”, ' +
+            '“recebi três mil de salário”, “paguei oitenta na farmácia no crédito”, “gastei duzentos em três vezes no cartão”, ' +
+            '“quanto gastei este mês”, “como está meu saldo”, “quanto gastei em alimentação”, ' +
             '“ler notificações”, “mostrar valores”, “ocultar valores” ou “pare de falar”.';
         cvvLogAdd('bot', txt);
-        cvvSpeak('Posso lançar gastos e entradas por voz, abrir telas e resumir suas finanças. Veja os exemplos na tela.');
+        cvvSpeak('Posso lançar gastos e entradas por voz, com forma de pagamento e parcelas, abrir telas e resumir suas finanças. Veja os exemplos na tela.');
     }
 
     /* ===================== ROTEADOR DE COMANDOS ===================== */
