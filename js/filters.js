@@ -393,6 +393,8 @@
         function printReport() {
             /* recurso dos planos pagos (Pro/Premium) */
             if (typeof cvGateBool === 'function' && !cvGateBool('exportar')) return;
+            /* layout de relatório premium (escolha "Salvar como PDF" na impressão) */
+            if (typeof cvPrintReport === 'function') { cvPrintReport(); return; }
             window.print();
         }
 

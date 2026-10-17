@@ -829,6 +829,10 @@
                 </div>
             </div>
 
+            <!-- RECURSOS PREMIUM (Projeção do fim de mês · Detector de vazamentos · Mapa de calor)
+                 No plano Grátis aparecem borrados com cadeado (modelo Pierre) — js/premiumFeatures.js -->
+            <div id="cvExtrasGrid" class="grid grid-cols-1 lg:grid-cols-3 gap-6"></div>
+
             <!-- ORÇAMENTOS POR CATEGORIA (item 3) -->
             <section id="secOrcamentos" class="cv-reveal centavus-card p-6">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 border-b border-white/5 pb-4">
@@ -1064,7 +1068,10 @@
                     <div class="zap-box">
                         <h3><i class="fa-solid fa-robot"></i> Bot automático no seu número</h3>
                         <p>O Zap já funciona aqui dentro, com os mesmos comandos do assistente de voz. O próximo passo é ligar seu número à API oficial da Meta (WhatsApp Cloud API), para você mandar os comandos pelo aplicativo e eles caírem aqui.</p>
-                        <span class="zap-soon">Em breve no seu número</span>
+                        <div class="zap-soon-row">
+                            <span class="zap-soon">Em breve no seu número</span>
+                            <button type="button" class="zap-bot-howto" onclick="cvBotInfo()"><i class="fa-solid fa-list-check mr-1"></i> Ver como ativar</button>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -1687,6 +1694,7 @@
     <script src="js/rendaFixa.js"></script>
     <script src="js/voice.js"></script>
     <script src="js/premium.js"></script>
+    <script src="js/premiumFeatures.js"></script>
     <script src="js/zap.js"></script>
 </body>
 </html>

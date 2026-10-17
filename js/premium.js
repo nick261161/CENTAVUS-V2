@@ -26,11 +26,34 @@
 
 /* ---------------- tabela de planos (preços configuráveis aqui) ---------------- */
 const CV_PLANOS = {
-    free:    { nome: 'Grátis',   precoM: 0,    precoA: 0,   metas: 3,       contas: 2,     cartoes: 2,      vozDia: 30,  zapDia: 5,   exportar: false },
-    pro:     { nome: 'Pro',      precoM: 19.9, precoA: 199, metas: 10,      contas: 6,     cartoes: 5,      vozDia: 150, zapDia: 150, exportar: true },
-    premium: { nome: 'Premium',  precoM: 39.9, precoA: 399, metas: Infinity, contas: Infinity, cartoes: Infinity, vozDia: Infinity, zapDia: Infinity, exportar: true }
+    free:    { nome: 'Grátis',   precoM: 0,    precoA: 0,   metas: 3,       contas: 2,     cartoes: 2,      vozDia: 30,  zapDia: 5,   exportar: false, extras: false },
+    pro:     { nome: 'Pro',      precoM: 19.9, precoA: 199, metas: 10,      contas: 6,     cartoes: 5,      vozDia: 150, zapDia: 150, exportar: true,  extras: true },
+    premium: { nome: 'Premium',  precoM: 39.9, precoA: 399, metas: Infinity, contas: Infinity, cartoes: Infinity, vozDia: Infinity, zapDia: Infinity, exportar: true, extras: true }
 };
 const CV_TRIAL_DIAS = 7;
+
+/* links de pagamento (checkout) — cole aqui os seus ou rode no console:
+      cvSetCheckout('pro',      'https://pay.hotmart.com/XXXX?off=YYYY')
+      cvSetCheckout('premium',  'https://pay.hotmart.com/ZZZZ?off=WWWW')
+   Enquanto estiver vazio, o botão "Escolher" leva ao campo de código. */
+const CV_CHECKOUT = { pro: '', premium: '' };
+function cvCheckoutLink(plano) {
+    try {
+        const salvo = JSON.parse(localStorage.getItem('centavus_checkout') || '{}');
+        if (salvo && salvo[plano]) return salvo[plano];
+    } catch (e) {}
+    return CV_CHECKOUT[plano] || '';
+}
+function cvSetCheckout(plano, url) {
+    if (plano !== 'pro' && plano !== 'premium') { console.warn('cvSetCheckout: plano deve ser "pro" ou "premium".'); return; }
+    let salvo = {};
+    try { salvo = JSON.parse(localStorage.getItem('centavus_checkout') || '{}') || {}; } catch (e) {}
+    salvo[plano] = String(url || '');
+    try { localStorage.setItem('centavus_checkout', JSON.stringify(salvo)); } catch (e) {}
+    cvRenderPlanos();
+    toast(url ? ('Link de pagamento do plano ' + plano + ' salvo.') : ('Link do plano ' + plano + ' removido.'));
+}
+window.cvSetCheckout = cvSetCheckout;
 
 /* ---------------- estado do plano (por conta) ---------------- */
 function cvPlanoKey() {
@@ -120,6 +143,8 @@ function cvGate(feature) {
     return false;
 }
 function cvLimiteDe(feature) { const L = cvPlanoLimits(); return L ? L[feature] : Infinity; }
+/* recursos exclusivos (mapa de calor, vazamentos, projeção, PDF): Pro e Premium */
+function cvExtras() { const L = cvPlanoLimits(); return !!(L && L.extras); }
 /* feature booleana: 'exportar' */
 function cvGateBool(feature) {
     const L = cvPlanoLimits();
@@ -206,6 +231,8 @@ function cvPlanoBadge() {
     }
     const zapTag = document.getElementById('zapPlanTag');
     if (zapTag) zapTag.textContent = txt;
+    /* libera (ou trava) os cards premium: projeção, vazamentos, mapa de calor */
+    if (typeof renderPremiumExtras === 'function') { try { renderPremiumExtras(); } catch (e) {} }
 }
 
 /* =================== MODAL DE PLANOS =================== */
@@ -222,15 +249,16 @@ function cvPlanosItens(plano) {
             ['fa-solid fa-bullseye', '10 metas · 6 contas · 5 cartões'],
             ['fa-solid fa-microphone', '150 comandos de voz por dia'],
             ['fa-brands fa-whatsapp', '150 comandos no Zap por dia'],
-            ['fa-solid fa-file-csv', 'Exportar em CSV e imprimir relatórios'],
+            ['fa-solid fa-file-csv', 'Exportar em CSV e relatório em PDF'],
+            ['fa-solid fa-hourglass-half', 'Projeção de fim de mês, detector de vazamentos e mapa de calor'],
             ['fa-solid fa-star', 'Novos recursos primeiro para você']
         ],
         premium: [
             ['fa-solid fa-infinity', 'Metas, contas e cartões ILIMITADOS'],
             ['fa-solid fa-microphone', 'Voz e Zap sem limite de comandos'],
             ['fa-solid fa-file-csv', 'Exportação sempre liberada'],
-            ['fa-solid fa-fire-flame-curved', 'Exclusivos: mapa de calor, detector de vazamentos, PDF e alertas (em breve)'],
-            ['fa-solid fa-rocket', 'Acesso antecipado a todas as novidades']
+            ['fa-solid fa-fire-flame-curved', 'Mapa de calor, detector de vazamentos, projeção do mês e PDF'],
+            ['fa-solid fa-rocket', 'Alertas inteligentes e acesso antecipado (em breve)']
         ]
     };
     return mapa[plano] || mapa.free;
@@ -253,10 +281,11 @@ function cvPlanCard(plano, atual) {
     const itens = cvPlanosItens(plano).map(function (it) {
         return '<li><i class="' + it[0] + '"></i><span>' + it[1] + '</span></li>';
     }).join('');
+    const link = (plano === 'free') ? '' : cvCheckoutLink(plano);
     const btn = plano === 'free'
         ? '<button type="button" class="cv-plano-btn cv-plano-btn-fre' + (atual ? ' disabled' : '') + '" disabled>' + (atual ? 'Seu plano' : 'Sempre grátis') + '</button>'
         : '<button type="button" class="cv-plano-btn ' + (plano === 'pro' ? 'cv-btn-pro' : 'cv-btn-prem') + (atual ? ' disabled' : '') + '"' +
-          (atual ? ' disabled' : ' onclick="cvScrollToCode()"') + '>' + (atual ? 'Seu plano' : 'Escolher ' + L.nome) + '</button>';
+          (atual ? ' disabled' : ' onclick="cvAssinar(\'' + plano + '\')"') + '>' + (atual ? 'Seu plano' : (link ? 'Assinar ' + L.nome + ' →' : 'Escolher ' + L.nome)) + '</button>';
     return '<div class="cv-plano-card' + (atual ? ' cv-plano-atual' : '') + (plano === 'pro' ? ' cv-plano-destaque' : '') + '">' +
         (plano === 'pro' ? '<span class="cv-plano-flag">Mais popular</span>' : '') +
         (atual ? '<span class="cv-plano-eu">Plano atual</span>' : '') +
@@ -327,6 +356,16 @@ function cvFecharPlanos() {
 function cvScrollToCode() {
     const el = document.getElementById('cvCodInput');
     if (el) { el.focus(); el.select && el.select(); }
+}
+/* botão "Assinar": abre o checkout se houver link; senão, leva ao código */
+function cvAssinar(plano) {
+    const link = cvCheckoutLink(plano);
+    if (link) {
+        try { window.open(link, '_blank', 'noopener'); } catch (e) { toast('Não consegui abrir o checkout.', 'error'); }
+        toast('Abrindo o checkout seguro. Depois de pagar, seu código chega na hora.');
+        return;
+    }
+    cvScrollToCode();
 }
 
 /* ---------------- boot ---------------- */

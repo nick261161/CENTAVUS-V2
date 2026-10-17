@@ -164,6 +164,7 @@
                 updateV2();
                 renderBudgets();
                 if(typeof renderAnalysis==='function')renderAnalysis();
+                if(typeof renderPremiumExtras==='function')renderPremiumExtras();
             }catch(e){console.warn('[centavus] refresh:',e&&e.message);}
         }
 

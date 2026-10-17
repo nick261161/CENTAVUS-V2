@@ -248,4 +248,131 @@ html[data-mode="light"] .zap-num-row input { background: #fff; border-color: rgb
 @media (prefers-reduced-motion: reduce) {
     .zap-bubble { animation: none; }
     .zap-dot { animation: none; }
+    .cvx-lock, .cvx-cel { animation: none !important; transition: none !important; }
 }
+
+/* ==========================================================================
+   RECURSOS PREMIUM — Projeção · Vazamentos · Mapa de calor
+   (js/premiumFeatures.js; no plano Grátis ficam borrados com cadeado)
+   ========================================================================== */
+#cvExtrasGrid { scroll-margin-top: 90px; }
+.cvx-card { position: relative; overflow: hidden; }
+.cvx-cab { margin-bottom: 14px; }
+.cvx-ico {
+    width: 30px; height: 30px; border-radius: 9px; display: inline-flex;
+    align-items: center; justify-content: center; font-size: 13px; flex: none;
+}
+.cvx-sub { font-size: 11.5px; color: #6F807C; margin-top: 3px; }
+.cvx-corpo { position: relative; min-height: 90px; }
+.cvx-travado .cvx-corpo { filter: blur(7px); -webkit-filter: blur(7px); pointer-events: none; user-select: none; }
+
+/* projeção */
+.cvx-valor { font-size: 30px; font-weight: 800; color: #fff; letter-spacing: -.02em; line-height: 1.1; }
+.cvx-legenda { font-size: 11.5px; color: #6F807C; margin-top: 2px; }
+.cvx-mini { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+.cvx-mini div { background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .05); border-radius: 10px; padding: 8px 9px; }
+.cvx-mini span { display: block; font-size: 10px; color: #6F807C; text-transform: uppercase; letter-spacing: .05em; }
+.cvx-mini strong { font-size: 12.5px; color: #F5F7F6; }
+.cvx-cmp { margin-top: 12px; font-size: 11.5px; font-weight: 700; }
+.cvx-ruim { color: #FF6B6B; }
+.cvx-bom { color: #40C8A0; }
+.cvx-vazio { font-size: 12.5px; color: #6F807C; line-height: 1.6; }
+
+/* detector de vazamentos */
+.cvx-achado { display: flex; gap: 11px; align-items: flex-start; padding: 9px 0; border-bottom: 1px dashed rgba(255, 255, 255, .07); }
+.cvx-achado:last-child { border-bottom: none; }
+.cvx-achado i { font-size: 15px; margin-top: 2px; width: 18px; text-align: center; flex: none; }
+.cvx-achado strong { display: block; font-size: 12.5px; color: #F5F7F6; }
+.cvx-achado p { font-size: 11.5px; color: #8FA19D; line-height: 1.55; margin-top: 2px; }
+.cvx-ok { display: flex; gap: 11px; align-items: center; padding: 14px; border-radius: 12px; background: rgba(64, 200, 160, .08); border: 1px solid rgba(64, 200, 160, .25); }
+.cvx-ok i { font-size: 20px; color: #40C8A0; }
+.cvx-ok span { font-size: 12px; color: #A8B5B2; line-height: 1.55; }
+
+/* mapa de calor */
+.cvx-heat { display: flex; gap: 4px; justify-content: center; padding: 6px 0 2px; overflow-x: auto; }
+.cvx-col { display: flex; flex-direction: column; gap: 4px; }
+.cvx-cel {
+    width: 13px; height: 13px; border-radius: 3.5px; background: #16211F; display: inline-block;
+    border: 1px solid rgba(255, 255, 255, .04); cursor: default;
+}
+.cvx-l1 { background: #0F4B3C; }
+.cvx-l2 { background: #177A5F; }
+.cvx-l3 { background: #2BA578; }
+.cvx-l4 { background: #40C8A0; box-shadow: 0 0 7px rgba(64, 200, 160, .45); }
+.cvx-heat-legenda { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 10.5px; color: #6F807C; }
+.cvx-legend-cels { display: inline-flex; gap: 4px; align-items: center; }
+.cvx-legend-cels .cvx-cel { cursor: default; }
+
+/* cadeado / vitrine */
+.cvx-lock {
+    position: absolute; inset: auto 0 0 0; top: 58px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; gap: 5px; padding: 16px;
+    background: linear-gradient(180deg, rgba(16, 16, 16, 0) 0%, rgba(16, 16, 16, .82) 28%, rgba(16, 16, 16, .96) 100%);
+}
+.cvx-lock > i { font-size: 20px; color: #FFD166; }
+.cvx-lock strong { font-size: 13.5px; color: #fff; }
+.cvx-lock span { font-size: 11.5px; color: #8FA19D; max-width: 240px; line-height: 1.5; }
+.cvx-lock-btns { display: flex; gap: 8px; margin-top: 7px; }
+.cvx-btn-try, .cvx-btn-ver { border: none; cursor: pointer; font-size: 11.5px; font-weight: 800; padding: 8px 14px; border-radius: 10px; transition: .18s; }
+.cvx-btn-try { background: linear-gradient(135deg, #FFD166, #F7B955); color: #1A1408; box-shadow: 0 4px 14px rgba(255, 209, 102, .25); }
+.cvx-btn-try:hover { transform: translateY(-1px); }
+.cvx-btn-ver { background: rgba(255, 255, 255, .1); color: #F5F7F6; border: 1px solid rgba(255, 255, 255, .14); }
+.cvx-btn-ver:hover { background: rgba(255, 255, 255, .16); }
+
+/* card de zap: como ativar o bot */
+.zap-soon-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.zap-bot-howto {
+    border: none; cursor: pointer; font-size: 11px; font-weight: 700; padding: 6px 12px; border-radius: 999px;
+    background: rgba(37, 211, 102, .12); color: #25D366; border: 1px solid rgba(37, 211, 102, .35); transition: .18s;
+}
+.zap-bot-howto:hover { background: rgba(37, 211, 102, .2); }
+
+/* =============== MODO CLARO: recursos premium =============== */
+html[data-mode="light"] .cvx-sub { color: #6F807C; }
+html[data-mode="light"] .cvx-valor { color: #0B1110; }
+html[data-mode="light"] .cvx-mini div { background: rgba(11, 18, 17, .04); border-color: rgba(11, 18, 17, .07); }
+html[data-mode="light"] .cvx-mini strong { color: #1E2B28; }
+html[data-mode="light"] .cvx-achado { border-bottom-color: rgba(11, 18, 17, .08); }
+html[data-mode="light"] .cvx-achado strong { color: #0B1110; }
+html[data-mode="light"] .cvx-achado p { color: #53625f; }
+html[data-mode="light"] .cvx-ok span { color: #46554F; }
+html[data-mode="light"] .cvx-cel { background: #E4EDEA; border-color: rgba(11, 18, 17, .06); }
+html[data-mode="light"] .cvx-l1 { background: #B9E5D6; }
+html[data-mode="light"] .cvx-l2 { background: #7ED2B6; }
+html[data-mode="light"] .cvx-l3 { background: #3FB895; }
+html[data-mode="light"] .cvx-l4 { background: #14806A; box-shadow: 0 0 7px rgba(20, 128, 106, .35); }
+html[data-mode="light"] .cvx-lock { background: linear-gradient(180deg, rgba(244, 248, 247, 0) 0%, rgba(244, 248, 247, .85) 28%, rgba(244, 248, 247, .97) 100%); }
+html[data-mode="light"] .cvx-lock strong { color: #0B1110; }
+html[data-mode="light"] .cvx-lock span { color: #53625f; }
+html[data-mode="light"] .cvx-btn-ver { background: rgba(11, 18, 17, .06); color: #1E2B28; border-color: rgba(11, 18, 17, .14); }
+html[data-mode="light"] .cvx-heat-legenda { color: #6F807C; }
+
+/* ==========================================================================
+   RELATÓRIO EM PDF (cvPrintReport → janela de impressão → "Salvar como PDF")
+   ========================================================================== */
+#cvPrintArea { display: none; }
+@media print {
+    /* esconde tudo da UI; mostra só o relatório */
+    body > * { display: none !important; }
+    body > #cvPrintArea { display: block !important; }
+    @page { margin: 14mm; }
+}
+#cvPrintArea { font-family: 'Plus Jakarta Sans', Arial, sans-serif; color: #14201E; }
+.cvp-head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #14806A; padding-bottom: 10px; margin-bottom: 16px; }
+.cvp-head h1 { font-size: 18px; margin: 0; color: #0B1110; }
+.cvp-head p { font-size: 11px; color: #6F807C; margin: 4px 0 0; }
+.cvp-logo { font-size: 16px; font-weight: 800; color: #14806A; letter-spacing: .04em; }
+.cvp-logo span { color: #0B1110; }
+.cvp-resumo { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
+.cvp-resumo div { border: 1px solid rgba(11, 18, 17, .14); border-radius: 8px; padding: 9px 11px; }
+.cvp-resumo span { display: block; font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: #6F807C; }
+.cvp-resumo strong { font-size: 14px; color: #0B1110; }
+#cvPrintArea h2 { font-size: 13px; margin: 16px 0 7px; color: #0B1110; }
+.cvp-cats { font-size: 11.5px; line-height: 1.8; }
+.cvp-tabela { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+.cvp-tabela th { text-align: left; background: #EDF4F2; color: #46554F; padding: 6px 8px; border-bottom: 1.5px solid rgba(11, 18, 17, .2); font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; }
+.cvp-tabela td { padding: 5px 8px; border-bottom: 1px solid rgba(11, 18, 17, .07); }
+.cvp-tabela tr { page-break-inside: avoid; }
+.cvp-neg { color: #C0392B; }
+.cvp-pos { color: #14806A; }
+.cvp-rodape { margin-top: 16px; font-size: 9.5px; color: #6F807C; border-top: 1px solid rgba(11, 18, 17, .12); padding-top: 8px; }

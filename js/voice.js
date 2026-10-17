@@ -775,9 +775,10 @@
             '“quanto tenho no cofrinho”, “definir CDI treze”, “criar renda fixa cdb de mil por doze meses”, ' +
             '“criar orçamento alimentação com oitocentos”, “quanto gastei este mês”, “próximo mês”, “buscar mercado”, ' +
             '“exportar csv”, “tema violeta”, “modo escuro”, “meu nome é João”, “limpar notificações”, “baixar backup”, ' +
+            '“quanto vou gastar no fim do mês”, “tem vazamento?”, “mapa de calor”, ' +
             '“ver planos”, “meu plano”, “ativar código”, “abrir zap” ou “testar premium”.';
         cvvLogAdd('bot', txt);
-        cvvSpeak('Posso lançar gastos, pagar faturas, criar metas, cartões, contas, cofrinho, renda fixa e orçamentos, transferir, abrir telas, resumir suas finanças e até mostrar os planos. Veja os exemplos na tela.');
+        cvvSpeak('Posso lançar gastos, pagar faturas, criar metas, cartões, contas, cofrinho, renda fixa e orçamentos, transferir, abrir telas, resumir suas finanças, projetar o fim do mês, checar vazamentos e até mostrar os planos. Veja os exemplos na tela.');
     }
 
     /* ===================== PLANOS E ATIVAÇÃO ===================== */
@@ -817,6 +818,55 @@
         /* ver planos */
         if (typeof cvAbrirPlanos === 'function') cvAbrirPlanos();
         cvvSay('Os planos são: Grátis, com tudo do Centavus e 30 comandos por dia; Pro por 19,90 reais por mês, com 150 comandos, 10 metas, 6 contas, 5 cartões e exportação; e Premium por 39,90 reais, tudo sem limite. Diga “ativar código” ou “testar premium”.');
+    }
+
+    /* ===================== RECURSOS PREMIUM (VOZ) ===================== */
+    /* projeção do fim de mês · detector de vazamentos · mapa de calor */
+    function cvvExtras(text, nv) {
+        const liberado = (typeof cvExtras === 'function') ? cvExtras() : false;
+
+        /* mapa de calor / detector: navegação até os relatórios */
+        if (/mapa de calor|calor dos gastos|abrir detector|abrir vazamento/.test(nv)) {
+            if (typeof setActiveNav === 'function') setActiveNav(null, 'relatorios');
+            const m = 'Abrindo os relatórios, onde ficam o mapa de calor e o detector de vazamentos.' +
+                (liberado ? '' : ' No plano grátis eles aparecem borrados — diga “testar premium” para liberar sete dias.');
+            cvvLogAdd('bot', m); cvvSpeak(m);
+            return;
+        }
+
+        /* no plano grátis os valores ficam travados (mesma vitrine do site) */
+        if (!liberado) {
+            cvvSay('Esse recurso é do Pro e do Premium. Posso liberar sete dias de teste agora: diga “testar premium”. Ou “ver planos”.');
+            return;
+        }
+        if (typeof isPrivacyHidden !== 'undefined' && isPrivacyHidden) {
+            cvvSay('Valores ocultos pelo modo de privacidade. Diga “mostrar valores”.');
+            return;
+        }
+
+        /* detector de vazamentos */
+        if (/vazamento|cobranca duplicada|cobrança duplicada|gastos formiga|detector/.test(nv)) {
+            const itens = (typeof cxVazamentosLista === 'function') ? cxVazamentosLista() : [];
+            if (!itens.length) {
+                cvvSay('Verifiquei seus lançamentos e não achei nada suspeito: sem cobrança duplicada, sem assinatura escondida e sem estouro de categoria. Tudo limpo.');
+                return;
+            }
+            const titulos = itens.slice(0, 3).map(function (i) { return i.titulo.toLowerCase(); }).join('; ');
+            cvvSay('Achei ' + itens.length + (itens.length > 1 ? ' pontos' : ' ponto') + ' de atenção: ' + titulos +
+                '. O principal está na tela, nos relatórios. Confira se vale contestar.');
+            if (typeof setActiveNav === 'function') setActiveNav(null, 'relatorios');
+            return;
+        }
+
+        /* projeção de fim de mês */
+        const p = (typeof cxProjecaoDados === 'function') ? cxProjecaoDados() : null;
+        if (!p) { cvvSay('Ainda não há gastos neste mês para eu projetar o fim do mês. Registre uma movimentação e me pergunte de novo.'); return; }
+        let m = 'No ritmo atual, você deve gastar ' + cvvMoneyWords(p.projecao) + ' até o fim do mês. ' +
+            'Já gastou ' + cvvMoneyWords(p.ateAgora) + ', na média de ' + cvvMoneyWords(p.ritmo) + ' por dia, faltando ' + p.restante + ' dias.';
+        if (p.dif !== null) {
+            m += ' Isso é ' + Math.abs(p.dif).toFixed(0) + ' por cento ' + (p.dif > 0 ? 'a mais' : 'a menos') + ' que no mês passado.';
+        }
+        cvvSay(m);
     }
 
     /* ===================== TODAS AS FUNÇÕES DO SITE ===================== */
@@ -1524,6 +1574,12 @@
         }
 
         /* ==================== COMANDOS COMPLETOS DO SITE ==================== */
+
+        /* --- recursos premium: projeção, vazamentos, mapa de calor --- */
+        if (/(proje|quanto vou gastar|quanto vai gastar|fim do mes|terminar o mes|ritmo de gasto|vazamento|cobranca duplicada|cobrança duplicada|gastos formiga|detector|mapa de calor|calor dos gastos)/.test(nv)) {
+            cvvExtras(text, nv);
+            return;
+        }
 
         /* --- planos, assinatura e ativação (sempre livres, sem cota) --- */
         if (/(plano|assinatura|premium|\bpro\b|quanto custa|ativar|codigo|testar|\btrial\b|zap|whatsapp)/.test(nv)) {

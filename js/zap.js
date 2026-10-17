@@ -182,3 +182,19 @@ function zapBoot() {
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', zapBoot);
 else zapBoot();
+
+/* passo a passo do bot real (WhatsApp Cloud API) — usado pelo card "Bot automático" */
+function cvBotInfo() {
+    if (typeof showInfo !== 'function') return;
+    showInfo(
+        'Ativar o bot no seu número',
+        'É um servidor gratuito que recebe as mensagens do WhatsApp e responde na hora. ' +
+        '1) Crie um app gratuito no Meta for Developers e ative o WhatsApp nele. ' +
+        '2) Pegue o Token de acesso e o ID do número (no painel > WhatsApp > API). ' +
+        '3) Baixe a pasta "bot-whatsapp" deste pacote, preencha as variáveis no README e rode "node server.js". ' +
+        '4) Aponte o webhook da Meta para o seu servidor (o token de verificação já vem configurado). ' +
+        'Pronto: seu cliente manda "gastei 45 no almoço" e o bot confirma na hora. ' +
+        'O passo a passo completo, com o que colar em cada tela, está no arquivo bot-whatsapp/README.md.',
+        'fa-robot'
+    );
+}
