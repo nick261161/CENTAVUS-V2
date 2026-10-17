@@ -204,6 +204,14 @@
         } catch (e) { return text; }
     }
 
+    /* acha a palavra ORIGINAL (com acentos) que corresponde a uma forma normalizada:
+       "almoco" → "almoço" (para a descrição não perder o acento do usuário) */
+    function cvvOriginalWord(text, normWord) {
+        const words = String(text || '').split(/\s+/);
+        const hit = words.find(w => cvvNorm(w) === normWord);
+        return hit || null;
+    }
+
     /* ===================== PAINEL / FAB ===================== */
     function cvvBuildUI() {
         if (cvvInited || !document.body) return;
@@ -246,7 +254,7 @@
 
         const chipsWrap = document.createElement('div');
         chipsWrap.className = 'cvv-chips';
-        ['Abrir cartões', 'Quanto devo nos cartões?', 'Paguei a fatura do Nubank', 'Gastei 45 reais no almoço', 'Recebi 3000 de salário', 'Como está meu saldo?', 'Ajuda'].forEach(c => {
+        ['Abrir cartões', 'Paguei a fatura do Nubank', 'Gastei 45 reais no almoço', 'Criar meta viagem com 500 de 5000', 'Guardar 200 no cofrinho', 'Transferir 100 da poupança para a corrente', 'Quanto tenho em cada conta?', 'Ajuda'].forEach(c => {
             const chip = document.createElement('button');
             chip.type = 'button';
             chip.className = 'cvv-chip';
@@ -643,6 +651,9 @@
         Object.keys(CVV_ONES).concat(Object.keys(CVV_SPECIAL), Object.keys(CVV_TENS), Object.keys(CVV_HUNDREDS), ['mil', 'centavos', 'centavo']).forEach(w => { desc = cvvStrip(desc, w); });
         CVV_FILLER.forEach(w => { desc = cvvStrip(desc, w); });
         desc = desc.replace(/\s+/g, ' ').replace(/^[\s,.:;]+|[\s,.:;]+$/g, '');
+        /* sem descrição sobrando: usa a palavra que o usuário falou (com acento),
+           ex.: "almoço" vira "Almoço" — não o nome genérico da categoria */
+        if (!desc && matched) desc = cvvOriginalWord(text, matched) || cat;
         if (!desc) desc = isIncome ? 'Entrada' : cat;
         desc = desc.charAt(0).toUpperCase() + desc.slice(1).toLowerCase();
 
@@ -752,13 +763,658 @@
     }
 
     function cvvHelp() {
-        const txt = 'Você pode falar: “abrir cartões”, “nova transação”, “gastei cinquenta reais no almoço”, ' +
-            '“recebi três mil de salário”, “paguei oitenta na farmácia no crédito”, “gastei duzentos em três vezes no cartão”, ' +
-            '“paguei a fatura do Nubank”, “paguei cento e cinquenta da fatura do Nubank”, “quanto devo nos cartões”, ' +
-            '“quanto gastei este mês”, “como está meu saldo”, “quanto gastei em alimentação”, ' +
-            '“ler notificações”, “mostrar valores”, “ocultar valores” ou “pare de falar”.';
+        const txt = 'Posso fazer tudo pelo voz. Exemplos: “nova transação”, “gastei cinquenta reais no almoço”, ' +
+            '“recebi três mil de salário”, “paguei a fatura do Nubank”, “paguei cento e cinquenta da fatura do Nubank”, ' +
+            '“quanto devo nos cartões”, “criar meta viagem com quinhentos de cinco mil”, “guardar duzentos na meta viagem”, ' +
+            '“excluir meta viagem” e depois “sim”, “criar cartão nubank com limite de cinco mil”, “transferir cem da poupança para a corrente”, ' +
+            '“quanto tenho no cofrinho”, “definir CDI treze”, “criar renda fixa cdb de mil por doze meses”, ' +
+            '“criar orçamento alimentação com oitocentos”, “quanto gastei este mês”, “próximo mês”, “buscar mercado”, ' +
+            '“exportar csv”, “tema violeta”, “modo escuro”, “meu nome é João”, “limpar notificações” ou “baixar backup”.';
         cvvLogAdd('bot', txt);
-        cvvSpeak('Posso lançar gastos e entradas por voz, pagar faturas de cartão com valor total ou parcial, abrir telas e resumir suas finanças. Veja os exemplos na tela.');
+        cvvSpeak('Posso lançar gastos, pagar faturas, criar metas, cartões, contas, cofrinho, renda fixa e orçamentos, transferir, abrir telas e resumir suas finanças. Veja os exemplos na tela.');
+    }
+
+    /* ===================== TODAS AS FUNÇÕES DO SITE ===================== */
+
+    function cvvSet(id, v) { const el = cvv$(id); if (!el) return false; el.value = String(v); return true; }
+
+    function cvvSubmit(formId) {
+        const f = cvv$(formId);
+        if (!f) return false;
+        if (f.requestSubmit) f.requestSubmit();
+        else if (typeof f.onsubmit === 'function' || f.getAttribute('onsubmit')) f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        return true;
+    }
+
+    /* número que aparece logo APÓS uma palavra-chave ("limite 5 mil", "dia 10") */
+    function cvvNumberAfter(text, kw) {
+        const m = new RegExp(kw + '\\s*(?:de\\s+|em\\s+|e\\s+|com\\s+|a\\s+)?([^.,;!?]*)').exec(cvvNorm(text));
+        if (!m) return NaN;
+        const seg = String(m[1] || '').trim();
+        /* "5 mil" / "cinquenta mil" → multiplica por mil */
+        const km = /^([a-z0-9]+(?:\s+[a-z0-9]+)?)\s*mil\b/.exec(seg);
+        if (km) {
+            const base = cvvNumberFromWords(km[1]);
+            if (!isNaN(base) && base > 0) return base * 1000;
+        }
+        return cvvExtractNumber(seg);
+    }
+
+    /* todos os números de uma frase, na ordem em que aparecem */
+    function cvvAllNumbers(text) {
+        const out = [];
+        const tokens = cvvNorm(text).replace(/[^a-z0-9\s,]/g, ' ').split(/\s+/);
+        let cur = 0, any = false, decOn = false, decFrac = false;
+        const flush = () => {
+            if (any) { let v = cur; if (decOn && !decFrac) v = v / 100; out.push(v); }
+            cur = 0; any = false; decOn = false; decFrac = false;
+        };
+        for (let i = 0; i < tokens.length; i++) {
+            const w = tokens[i], isLast = i === tokens.length - 1;
+            if (CVV_ONES[w] != null) { cur += CVV_ONES[w]; any = true; if (!isLast) continue; flush(); continue; }
+            if (CVV_SPECIAL[w] != null) { cur += CVV_SPECIAL[w]; any = true; decOn = true; if (!isLast) continue; flush(); continue; }
+            if (CVV_TENS[w] != null) { cur += CVV_TENS[w]; any = true; if (!isLast) continue; flush(); continue; }
+            if (CVV_HUNDREDS[w] != null) { cur += CVV_HUNDREDS[w]; any = true; if (!isLast) continue; flush(); continue; }
+            if (w === 'mil') { cur = (cur || 1) * 1000; any = true; if (!isLast) continue; flush(); continue; }
+            if (w === 'centavos' || w === 'centavo') { if (any && !decOn) cur = cur / 100; flush(); continue; }
+            if (w === 'e') continue;
+            if (/^\d+([.,]\d+)?$/.test(w)) {
+                const hasSep = /[.,]\d+$/.test(w);
+                cur += parseFloat(w.replace(',', '.'));
+                any = true; if (hasSep) decFrac = true;
+                if (!isLast) continue; flush(); continue;
+            }
+            flush();
+        }
+        flush();
+        return out;
+    }
+
+    function cvvSay(msg) { cvvLogAdd('bot', msg); cvvSpeak(msg); }
+
+    /* remove números e palavras de número de um texto ("5 mil" → "") */
+    function cvvStripNumbers(text) {
+        let t = String(text || '').replace(/\d[\d.,]*/g, ' ');
+        Object.keys(CVV_ONES).concat(Object.keys(CVV_SPECIAL), Object.keys(CVV_TENS), Object.keys(CVV_HUNDREDS), ['mil', 'centavos', 'centavo']).forEach(w => { t = cvvStrip(t, w); });
+        return t;
+    }
+
+    /* acha entidades pelo nome falado (metas, contas, orçamentos) */
+    function cvvFindByName(list, nv) {
+        if (!list || !list.length) return null;
+        let hit = list.find(x => { const n = cvvNorm(x.name); return n.length > 1 && nv.indexOf(n) >= 0; });
+        if (hit) return hit;
+        hit = list.find(x => cvvNorm(x.name).split(/\s+/).some(w => w.length > 3 && nv.indexOf(w) >= 0));
+        if (hit) return hit;
+        return (list.length === 1 && !/(varios|todas|cada|quais|lista)/.test(nv)) ? list[0] : null;
+    }
+
+    /* ---------------- confirmação por VOZ do cvConfirm ----------------
+       Quando uma ação destrutiva abre o diálogo de confirmação, o usuário
+       pode dizer "sim" para confirmar ou "não" para cancelar. */
+    function cvvTryConfirmVoice(nv) {
+        const cm = document.getElementById('cvConfirmModal');
+        if (!cm || cm.classList.contains('hidden')) return false;
+        if (/^(sim|confirma|confirmar|pode|isso|isso mesmo|yes|s\b)/.test(nv)) {
+            const ok = cm.querySelector('#cvConfirmOk');
+            if (ok) { ok.click(); cvvSay('Confirmado.'); return true; }
+        }
+        if (/^(nao|não|cancela|cancelar|para|abortar|n\b)/.test(nv)) {
+            const c = cm.querySelector('#cvConfirmCancel');
+            if (c) { c.click(); cvvSay('Tudo bem, cancelei.'); return true; }
+        }
+        return false;
+    }
+
+    /* ===================== METAS ===================== */
+    function cvvGoalsList() {
+        const list = (typeof goals !== 'undefined' && Array.isArray(goals)) ? goals : [];
+        if (!list.length) { cvvSay('Você ainda não tem metas. Diga “criar meta viagem com quinhentos de cinco mil”.'); return; }
+        if (isPrivacyHidden) { cvvSay('Valores ocultos pelo modo de privacidade. Diga “mostrar valores”.'); return; }
+        const linhas = list.map(g => {
+            const pct = g.target > 0 ? Math.min(100, Math.round((g.current / g.target) * 100)) : 0;
+            const falta = Math.max(0, round2(g.target - g.current));
+            const done = pct >= 100;
+            return g.name + ': ' + pct + ' por cento' + (done ? ', meta concluída' : ', faltam ' + cvvMoneyWords(falta));
+        });
+        cvvSay('Suas metas: ' + linhas.join('. ') + '.');
+    }
+
+    /* "criar meta viagem com 500 de 5000" · "criar meta carro de 20 mil" */
+    function cvvGoalCreate(text) {
+        const nv = cvvNorm(text);
+        if (typeof openGoalModal !== 'function') { cvvSay('Metas não disponíveis agora.'); return; }
+        const nums = cvvAllNumbers(text);
+        if (!nums.length) { cvvSay('Quanto essa meta vale? Diga, por exemplo: “criar meta viagem com quinhentos de cinco mil”.'); return; }
+        const current = nums.length > 1 ? nums[0] : 0;
+        const target = nums.length > 1 ? nums[1] : nums[0];
+        if (!(target > 0)) { cvvSay('O valor da meta precisa ser maior que zero.'); return; }
+        /* nome: texto após "meta", sem números nem preâmbulos */
+        let nome = text;
+        const mIdx = nv.indexOf('meta');
+        if (mIdx >= 0) nome = text.slice(mIdx + 4);
+        ['criar', 'nova', 'novo', 'adicionar', 'cadastrar', 'registrar', 'com', 'de', 'do', 'da', 'para', 'valendo', 'no', 'na', 'e'].forEach(w => { nome = cvvStrip(nome, w); });
+        nome = cvvStripNumbers(nome);
+        CVV_FILLER.forEach(w => { nome = cvvStrip(nome, w); });
+        nome = nome.replace(/\s+/g, ' ').replace(/^[\s,.:;]+|[\s,.:;]+$/g, '');
+        if (!nome) { cvvSay('Qual o nome da meta? Diga, por exemplo: “criar meta viagem com quinhentos de cinco mil”.'); return; }
+        openGoalModal();
+        cvvSet('goalTitle', nome.charAt(0).toUpperCase() + nome.slice(1));
+        cvvSet('goalCurrent', current > 0 ? String(current.toFixed(2)) : '0');
+        cvvSet('goalTarget', String(target.toFixed(2)));
+        cvvSubmit('goalForm');
+        if (isPrivacyHidden) cvvSay('Meta “' + nome + '” criada.');
+        else cvvSay('Meta “' + nome + '” criada: ' + cvvMoneyWords(current) + ' de ' + cvvMoneyWords(target) + '.');
+    }
+
+    /* "guardar 200 na meta viagem" · "resgatar 100 da meta carro" */
+    function cvvGoalValue(text, mode) {
+        const nv = cvvNorm(text);
+        const list = (typeof goals !== 'undefined' && Array.isArray(goals)) ? goals : [];
+        if (!list.length) { cvvSay('Você ainda não tem metas cadastradas.'); return; }
+        const g = cvvFindByName(list, nv);
+        if (!g) { cvvSay('Qual meta? Suas metas são: ' + list.map(x => x.name).join(', ') + '.'); return; }
+        let val = cvvExtractNumber(text);
+        if (isNaN(val) || val <= 0) { cvvSay('Quanto você quer ' + (mode === 'add' ? 'guardar' : 'resgatar') + ' da meta ' + g.name + '?'); return; }
+        if (mode === 'add' && g.current >= g.target) {
+            cvvSay('A meta ' + g.name + ' já está concluída.');
+            return;
+        }
+        if (mode === 'remove' && val > g.current + 0.001) {
+            cvvSay('Só há ' + cvvMoneyWords(g.current) + ' guardados na meta ' + g.name + '.');
+            return;
+        }
+        openGoalValue(g.id, mode);
+        cvvSet('goalValueInput', val.toFixed(2));
+        /* guarda o total ANTES da baixa (confirmGoalValue já muta g.current) */
+        const antes = Number(g.current) || 0;
+        confirmGoalValue();
+        const novoTotal = (mode === 'add' ? antes + val : antes - val);
+        cvvSay((mode === 'add' ? 'Guardei ' : 'Resgatei ') + cvvMoneyWords(val) + ' ' + (mode === 'add' ? 'na' : 'da') + ' meta ' + g.name + '. Novo total: ' + cvvMoneyWords(novoTotal) + ' de ' + cvvMoneyWords(g.target) + '.');
+    }
+
+    /* "editar meta viagem para 8000" · "aumentar meta carro em 2000" */
+    function cvvGoalEdit(text) {
+        const nv = cvvNorm(text);
+        const list = (typeof goals !== 'undefined' && Array.isArray(goals)) ? goals : [];
+        if (!list.length) { cvvSay('Você ainda não tem metas cadastradas.'); return; }
+        const g = cvvFindByName(list, nv);
+        if (!g) { cvvSay('Qual meta? Suas metas são: ' + list.map(x => x.name).join(', ') + '.'); return; }
+        let val = cvvExtractNumber(text);
+        if (isNaN(val) || val <= 0) { cvvSay('Para quanto quer ajustar a meta ' + g.name + '? Diga, por exemplo: “editar meta ' + cvvNorm(g.name) + ' para oitenta mil”.'); return; }
+        if (/aumentar|acrescentar|mais/.test(nv) && !/para\b/.test(nv)) val = round2(g.target + val);
+        openGoalModal(g);
+        cvvSet('goalTarget', String(val.toFixed(2)));
+        cvvSubmit('goalForm');
+        cvvSay('Meta ' + g.name + ' ajustada para ' + cvvMoneyWords(val) + '.');
+    }
+
+    /* "excluir meta viagem" — abre o diálogo e espera "sim" */
+    function cvvGoalDelete(text) {
+        const nv = cvvNorm(text);
+        const list = (typeof goals !== 'undefined' && Array.isArray(goals)) ? goals : [];
+        if (!list.length) { cvvSay('Você ainda não tem metas cadastradas.'); return; }
+        const g = cvvFindByName(list, nv);
+        if (!g) { cvvSay('Qual meta? Suas metas são: ' + list.map(x => x.name).join(', ') + '.'); return; }
+        cvvSay('Vou excluir a meta ' + g.name + '. Diga “sim” para confirmar.');
+        deleteGoal(g.id);
+    }
+
+    /* ===================== CARTÕES ===================== */
+    /* "criar cartão nubank com limite 5 mil vence dia 10 fecha dia 5" */
+    function cvvCardCreate(text) {
+        if (typeof openCardModal !== 'function') { cvvSay('Cartões não disponíveis agora.'); return; }
+        openCardModal();
+        /* nome: texto após "cartao", sem números nem campos */
+        let nome = text;
+        const mIdx = cvvNorm(text).indexOf('cartao');
+        if (mIdx >= 0) nome = text.slice(mIdx + 6);
+        ['criar', 'novo', 'novo cartao', 'cadastrar', 'adicionar', 'com', 'de', 'do', 'da', 'limite', 'vence', 'vencimento', 'venc', 'fecha', 'fechamento', 'fech', 'dia', 'fatura', 'final', 'bandeira', 'para'].forEach(w => { nome = cvvStrip(nome, w); });
+        nome = cvvStripNumbers(nome);
+        nome = nome.replace(/\s+/g, ' ').replace(/^[\s,.:;]+|[\s,.:;]+$/g, '');
+        if (!nome) { cvvSay('Qual o apelido do cartão? Diga, por exemplo: “criar cartão nubank com limite de cinco mil”.'); closeCardModal(); return; }
+
+        const limite = cvvNumberAfter(text, 'limite');
+        if (isNaN(limite) || limite < 0) { cvvSay('Qual o limite do cartão ' + nome + '? Diga, por exemplo: “criar cartão ' + cvvNorm(nome) + ' com limite de cinco mil”.'); closeCardModal(); return; }
+        const fatura = cvvNumberAfter(text, 'fatura');
+        const venc = cvvNumberAfter(text, 'venc');
+        const fech = cvvNumberAfter(text, 'fech');
+
+        cvvSet('cardName', nome);
+        cvvSet('cardLimit', String(limite));
+        cvvSet('cardFatura', (!isNaN(fatura) && fatura >= 0) ? String(fatura) : '0');
+        const vencDia = (!isNaN(venc) && venc >= 1 && venc <= 28) ? Math.round(venc) : 10;
+        const fechDia = (!isNaN(fech) && fech >= 1 && fech <= 28) ? Math.round(fech) : 5;
+        cvvSet('cardDue', String(vencDia));
+        cvvSet('cardClose', String(fechDia));
+        /* bandeira dita */
+        const brandMap = [['visa', 'Visa'], ['master', 'Mastercard'], ['elo', 'Elo'], ['amex', 'American Express'], ['american', 'American Express'], ['hiper', 'Hipercard'], ['outro', 'Outro']];
+        for (const [kw, val] of brandMap) {
+            const sel = cvv$('cardBrand');
+            if (nvContains(text, kw) && sel && Array.prototype.some.call(sel.options, o => o.value === val)) { cvvSet('cardBrand', val); break; }
+        }
+        cvvSubmit('cardForm');
+        cvvSay('Cartão ' + nome + ' criado com limite de ' + cvvMoneyWords(limite) + ', vencendo dia ' + vencDia + '.');
+    }
+    function nvContains(text, kw) { return cvvNorm(text).indexOf(kw) >= 0; }
+
+    /* "editar cartão nubank limite 8 mil" · "editar cartão nubank fatura 300" */
+    function cvvCardEdit(text) {
+        const nv = cvvNorm(text);
+        const card = cvvCardByVoice(nv);
+        if (!card) return;
+        const limite = cvvNumberAfter(text, 'limite');
+        const fatura = cvvNumberAfter(text, 'fatura');
+        const venc = cvvNumberAfter(text, 'venc');
+        const fech = cvvNumberAfter(text, 'fech');
+        openCardModal(card.id);
+        if (!isNaN(limite) && limite >= 0) cvvSet('cardLimit', String(limite));
+        if (!isNaN(fatura) && fatura >= 0) cvvSet('cardFatura', String(fatura));
+        if (!isNaN(venc) && venc >= 1 && venc <= 28) cvvSet('cardDue', String(Math.round(venc)));
+        if (!isNaN(fech) && fech >= 1 && fech <= 28) cvvSet('cardClose', String(Math.round(fech)));
+        cvvSubmit('cardForm');
+        cvvSay('Cartão ' + card.name + ' atualizado.');
+    }
+
+    /* "excluir cartão nubank" — abre o diálogo e espera "sim" */
+    function cvvCardDelete(text) {
+        const nv = cvvNorm(text);
+        const card = cvvCardByVoice(nv);
+        if (!card) return;
+        cvvSay('Vou excluir o cartão ' + card.name + '. Diga “sim” para confirmar.');
+        deleteCard(card.id);
+    }
+
+    /* ===================== CONTAS ===================== */
+    function cvvAccountsList() {
+        const list = (typeof accounts !== 'undefined' && Array.isArray(accounts)) ? accounts : [];
+        if (!list.length) { cvvSay('Você ainda não tem contas cadastradas. Diga “criar conta nubank com mil e quinhentos”.'); return; }
+        if (isPrivacyHidden) { cvvSay('Valores ocultos pelo modo de privacidade. Diga “mostrar valores”.'); return; }
+        const linhas = list.map(a => a.name + ': ' + cvvMoneyWords(accountBalance(a)));
+        cvvSay('Suas contas: ' + linhas.join('. ') + '. Total: ' + cvvMoneyWords(totalAccountsBalance()) + '.');
+    }
+
+    function cvvAccountTypeName(nv) {
+        if (/poupanc/.test(nv)) return 'poupanca';
+        if (/corrent/.test(nv)) return 'corrente';
+        if (/dinheiro|especie/.test(nv)) return 'dinheiro';
+        if (/investiment/.test(nv)) return 'investimentos';
+        if (/outro/.test(nv)) return 'outros';
+        return null;
+    }
+
+    /* "criar conta nubank com 1500" · "criar conta poupança com dois mil" */
+    function cvvAccountCreate(text) {
+        const nv = cvvNorm(text);
+        if (typeof openAccountModal !== 'function') { cvvSay('Contas não disponíveis agora.'); return; }
+        const nums = cvvAllNumbers(text);
+        if (!nums.length) { cvvSay('Qual o saldo inicial da conta? Diga, por exemplo: “criar conta nubank com mil e quinhentos”.'); return; }
+        const saldo = nums[0];
+        let nome = text;
+        const mIdx = nv.indexOf('conta');
+        if (mIdx >= 0) nome = text.slice(mIdx + 5);
+        ['criar', 'nova', 'novo', 'cadastrar', 'adicionar', 'com', 'de', 'do', 'da', 'tipo', 'poupanca', 'poupança', 'corrente', 'dinheiro', 'especie', 'investimento', 'investimentos', 'outros', 'saldo'].forEach(w => { nome = cvvStrip(nome, w); });
+        nome = cvvStripNumbers(nome);
+        CVV_FILLER.forEach(w => { nome = cvvStrip(nome, w); });
+        nome = nome.replace(/\s+/g, ' ').replace(/^[\s,.:;]+|[\s,.:;]+$/g, '');
+        const tipo = cvvAccountTypeName(nv);
+        /* "criar conta poupança com dois mil" → sem nome próprio: usa o tipo como nome */
+        if (!nome && tipo) nome = { poupanca: 'Poupança', corrente: 'Conta corrente', dinheiro: 'Dinheiro', investimentos: 'Investimentos', outros: 'Outros' }[tipo];
+        if (!nome) { cvvSay('Qual o nome da conta? Diga, por exemplo: “criar conta nubank com mil e quinhentos”.'); return; }
+        openAccountModal();
+        cvvSet('accountName', nome);
+        if (tipo) cvvSet('accountType', tipo);
+        cvvSet('accountBalanceInput', String(saldo.toFixed(2)));
+        cvvSubmit('accountForm');
+        cvvSay('Conta ' + nome + ' criada com saldo de ' + cvvMoneyWords(saldo) + '.');
+    }
+
+    /* "editar conta nubank com saldo 2000" */
+    function cvvAccountEdit(text) {
+        const nv = cvvNorm(text);
+        const list = (typeof accounts !== 'undefined' && Array.isArray(accounts)) ? accounts : [];
+        if (!list.length) { cvvSay('Você ainda não tem contas cadastradas.'); return; }
+        const acc = cvvFindByName(list, nv);
+        if (!acc) { cvvSay('Qual conta? Suas contas são: ' + list.map(x => x.name).join(', ') + '.'); return; }
+        const nums = cvvAllNumbers(text);
+        if (!nums.length) { cvvSay('Qual o novo saldo da conta ' + acc.name + '?'); return; }
+        openAccountModal(acc.id);
+        cvvSet('accountBalanceInput', String(nums[0].toFixed(2)));
+        const tipo = cvvAccountTypeName(nv);
+        if (tipo) cvvSet('accountType', tipo);
+        cvvSubmit('accountForm');
+        cvvSay('Saldo da conta ' + acc.name + ' ajustado para ' + cvvMoneyWords(nums[0]) + '.');
+    }
+
+    /* "excluir conta nubank" — espera "sim" */
+    function cvvAccountDelete(text) {
+        const nv = cvvNorm(text);
+        const list = (typeof accounts !== 'undefined' && Array.isArray(accounts)) ? accounts : [];
+        if (!list.length) { cvvSay('Você ainda não tem contas cadastradas.'); return; }
+        const acc = cvvFindByName(list, nv);
+        if (!acc) { cvvSay('Qual conta? Suas contas são: ' + list.map(x => x.name).join(', ') + '.'); return; }
+        cvvSay('Vou excluir a conta ' + acc.name + '. Diga “sim” para confirmar.');
+        deleteAccount(acc.id);
+    }
+
+    /* "transferir 100 da poupança para a corrente" */
+    function cvvTransfer(text) {
+        const nv = cvvNorm(text);
+        const list = (typeof accounts !== 'undefined' && Array.isArray(accounts)) ? accounts : [];
+        if (list.length < 2) { cvvSay('Crie pelo menos duas contas para transferir entre elas.'); return; }
+        const val = cvvExtractNumber(text);
+        if (isNaN(val) || val <= 0) {
+            if (typeof openTransferModal === 'function') { openTransferModal(); cvvSay('Abrindo transferência. Diga, por exemplo: “transferir cem da poupança para a corrente”.'); }
+            return;
+        }
+        /* casa por NOME ou por TIPO ("poupança", "corrente") e ordena pela
+           posição em que a conta foi citada na frase */
+        const typeRe = { poupanca: /poupanc/, corrente: /corrent/, dinheiro: /dinheiro|especie/, investimentos: /investiment/, outros: /outro/ };
+        const menc = [];
+        list.forEach(a => {
+            const nomeNv = cvvNorm(a.name);
+            let pos = nomeNv.length > 1 ? nv.indexOf(nomeNv) : -1;
+            const re = typeRe[a.type];
+            if (re) {
+                const m = re.exec(nv);
+                if (m && (pos < 0 || m.index < pos)) pos = m.index;
+            }
+            if (pos >= 0) menc.push({ acc: a, pos: pos });
+        });
+        menc.sort((x, y) => x.pos - y.pos);
+        if (menc.length < 2) {
+            cvvSay('De qual conta e para qual conta? Suas contas são: ' + list.map(x => x.name).join(', ') + '.');
+            return;
+        }
+        const from = menc[0].acc, to = menc[1].acc;
+        if (String(from.id) === String(to.id)) { cvvSay('Escolha duas contas diferentes.'); return; }
+        openTransferModal();
+        cvvSet('transferFrom', String(from.id));
+        cvvSet('transferTo', String(to.id));
+        cvvSet('transferValue', val.toFixed(2));
+        cvvSet('transferDate', toIso(new Date()));
+        cvvSubmit('transferForm');
+        cvvSay(cvvMoneyWords(val) + ' transferidos de ' + from.name + ' para ' + to.name + '.');
+    }
+
+    /* ===================== COFRINHO ===================== */
+    /* "guardar 500 no cofrinho" · "resgatar 100 do cofrinho" */
+    function cvvCofrinhoValue(text, mode) {
+        if (typeof openCofrinhoValue !== 'function') { cvvSay('Cofrinho não disponível agora.'); return; }
+        const val = cvvExtractNumber(text);
+        if (isNaN(val) || val <= 0) { cvvSay('Quanto você quer ' + (mode === 'add' ? 'guardar' : 'resgatar') + ' no cofrinho?'); return; }
+        const c = (typeof cofrinho !== 'undefined') ? cofrinho : null;
+        if (mode === 'remove' && c && val > c.saldo + 0.001) { cvvSay('Só há ' + cvvMoneyWords(c.saldo) + ' no cofrinho.'); return; }
+        openCofrinhoValue(mode);
+        cvvSet('goalValueInput', val.toFixed(2));
+        confirmCofrinhoValue();
+        const novo = c ? (mode === 'add' ? c.saldo : c.saldo) : null;
+        cvvSay((mode === 'add' ? 'Guardei ' : 'Resgatei ') + cvvMoneyWords(val) + (mode === 'add' ? ' no cofrinho.' : ' do cofrinho.') + (novo != null ? ' Saldo: ' + cvvMoneyWords(novo) + '.' : ''));
+    }
+
+    /* "quanto tenho no cofrinho" · "quanto rende o cofrinho" · "status do cofrinho" */
+    function cvvCofrinhoStatus() {
+        const c = (typeof cofrinho !== 'undefined') ? cofrinho : null;
+        if (!c) { cvvSay('Cofrinho não encontrado.'); return; }
+        const cdi = Number(c.cdi) || 0;
+        const mensal = Number(c.mensal) || 0;
+        const rendMes = round2(c.saldo * (cdi / 100) / 12);
+        const proj = (typeof cfProjection === 'function') ? cfProjection(c.saldo, mensal, 12) : null;
+        if (isPrivacyHidden) {
+            cvvSay('Cofrinho com CDI de ' + cdi.toFixed(2).replace('.', ',') + ' por cento ao ano. Valores ocultos. Diga “mostrar valores”.');
+            return;
+        }
+        let txt = 'Cofrinho: ' + cvvMoneyWords(c.saldo) + ' guardados, CDI de ' + cdi.toFixed(2).replace('.', ',') + ' por cento ao ano';
+        txt += rendMes > 0 ? ', rendendo cerca de ' + cvvMoneyWords(rendMes) + ' por mês' : '';
+        txt += '.';
+        if (proj != null && proj > c.saldo) txt += ' Em 12 meses, com ' + cvvMoneyWords(mensal) + ' por mês, você teria ' + cvvMoneyWords(proj) + '.';
+        cvvSay(txt);
+    }
+
+    /* "definir CDI 13" · "CDI 13,5" */
+    function cvvCofrinhoCdi(text) {
+        const val = cvvNumberAfter(text, 'cdi');
+        if (isNaN(val) || val < 0 || val > 100) { cvvSay('Qual o CDI em por cento ao ano? Diga, por exemplo: “definir CDI 13”.'); return; }
+        cvvSet('cdiInput', String(val));
+        setCdi();
+        cvvSay('CDI definido em ' + val.toFixed(2).replace('.', ',') + ' por cento ao ano.');
+    }
+
+    /* "guardar 300 por mês" · "quanto guardar por mês" */
+    function cvvCofrinhoMensal(text) {
+        const val = cvvExtractNumber(text);
+        if (isNaN(val) || val < 0) { cvvSay('Quanto você quer guardar por mês? Diga, por exemplo: “guardar trezentos por mês”.'); return; }
+        const el = cvv$('simAporte');
+        if (el) el.value = String(val);
+        saveGuardadoMensal();
+        cvvSay('Guardado mensal definido em ' + cvvMoneyWords(val) + ' por mês.');
+    }
+
+    /* ===================== RENDA FIXA ===================== */
+    /* "criar renda fixa cdb de 1000 por 12 meses" */
+    function cvvRfCreate(text) {
+        const nv = cvvNorm(text);
+        if (typeof openRendaFixa !== 'function') { cvvSay('Renda fixa não disponível agora.'); return; }
+        const nums = cvvAllNumbers(text);
+        if (!nums.length) { cvvSay('Qual o valor da renda fixa? Diga, por exemplo: “criar renda fixa cdb de mil por doze meses”.'); return; }
+        const valor = nums[0];
+        let prazo = 12;
+        const pm = /(\d+|[a-zà-ú]+)\s*(meses|mes)\b/.exec(nv);
+        if (pm) { const p = cvvExtractNumber(pm[1]); if (!isNaN(p) && p >= 1) prazo = Math.round(p); }
+        else if (nums.length > 1) prazo = Math.max(1, Math.round(nums[1]));
+        openRendaFixa();
+        const sel = cvv$('rfTipo');
+        const tipoMap = [['cdb', 'CDB'], ['lci', 'LCI'], ['lca', 'LCA'], ['tesouro', 'Tesouro Selic'], ['selic', 'Tesouro Selic'], ['cri', 'CRI'], ['cra', 'CRA'], ['debenture', 'Debênture'], ['debentura', 'Debênture']];
+        for (const [kw, val] of tipoMap) {
+            if (nv.indexOf(kw) >= 0 && sel && Array.prototype.some.call(sel.options, o => o.value === val)) { cvvSet('rfTipo', val); break; }
+        }
+        cvvSet('rfValor', String(valor));
+        cvvSet('rfPrazo', String(prazo));
+        const ini = cvv$('rfInicio');
+        if (ini && !ini.value) cvvSet('rfInicio', toIso(new Date()));
+        cvvSubmit('rfForm');
+        const tipoSel = sel ? sel.value : 'Renda fixa';
+        cvvSay(tipoSel + ' registrado: ' + cvvMoneyWords(valor) + ' por ' + prazo + ' meses.');
+    }
+
+    /* "quanto rende renda fixa" · "status da renda fixa" */
+    function cvvRfStatus() {
+        const rf = (typeof rendaFixa !== 'undefined') ? rendaFixa : null;
+        if (!rf || !rf.itens || !rf.itens.length) { cvvSay('Você ainda não tem investimentos de renda fixa registrados.'); return; }
+        if (isPrivacyHidden) { cvvSay('Valores ocultos pelo modo de privacidade. Diga “mostrar valores”.'); return; }
+        const total = rf.itens.reduce((s, i) => s + (Number(i.valor) || 0), 0);
+        const receita = (typeof rfReceitaFoco === 'function') ? rfReceitaFoco() : 0;
+        cvvSay('Renda fixa: ' + rf.itens.length + ' registro(s), total investido de ' + cvvMoneyWords(total) + '. No mês focado rendeu ' + cvvMoneyWords(receita) + '.');
+    }
+
+    /* "excluir renda fixa cdb" */
+    function cvvRfDelete(text) {
+        const nv = cvvNorm(text);
+        const rf = (typeof rendaFixa !== 'undefined') ? rendaFixa : null;
+        if (!rf || !rf.itens || !rf.itens.length) { cvvSay('Você ainda não tem investimentos de renda fixa registrados.'); return; }
+        let item = rf.itens.find(i => nv.indexOf(cvvNorm(i.tipo)) >= 0);
+        if (!item && rf.itens.length === 1) item = rf.itens[0];
+        if (!item) { cvvSay('Qual registro? Você tem: ' + rf.itens.map(i => i.tipo + ' de ' + money(i.valor)).join(', ') + '.'); return; }
+        if (typeof rfLoadItem === 'function') rfLoadItem(item.id);
+        cvvSay('Vou excluir o registro ' + item.tipo + ' de ' + cvvMoneyWords(item.valor) + '. Diga “sim” para confirmar.');
+        deleteRfFromModal();
+    }
+
+    /* ===================== ORÇAMENTOS ===================== */
+    /* "criar orçamento alimentação com 800" */
+    function cvvBudgetCreate(text) {
+        const nv = cvvNorm(text);
+        const val = cvvExtractNumber(text);
+        if (isNaN(val) || val <= 0) { cvvSay('Qual o limite mensal? Diga, por exemplo: “criar orçamento alimentação com oitocentos”.'); return; }
+        const names = (typeof categoriesData !== 'undefined' ? categoriesData : []).map(c => c.name);
+        const cat = names.find(n => nv.indexOf(cvvNorm(n)) >= 0)
+            || ((typeof budgets !== 'undefined' && budgets) ? (budgets.find(b => nv.indexOf(cvvNorm(b.name)) >= 0) || {}).name : null);
+        if (!cat) { cvvSay('De qual categoria? Categorias: ' + names.join(', ') + '.'); return; }
+        if (typeof openBudgetModal === 'function') openBudgetModal();
+        if (typeof pickBudget === 'function') pickBudget(cat);
+        cvvSet('budgetLimit', String(val));
+        cvvSubmit('budgetForm');
+        cvvSay('Orçamento de ' + cat + ' definido: ' + cvvMoneyWords(val) + ' por mês.');
+    }
+
+    /* "excluir orçamento alimentação" — espera "sim" */
+    function cvvBudgetDelete(text) {
+        const nv = cvvNorm(text);
+        const list = (typeof budgets !== 'undefined' && Array.isArray(budgets)) ? budgets : [];
+        if (!list.length) { cvvSay('Você ainda não tem orçamentos definidos.'); return; }
+        const b = cvvFindByName(list, nv);
+        if (!b) { cvvSay('Qual orçamento? Você tem: ' + list.map(x => x.name).join(', ') + '.'); return; }
+        cvvSay('Vou remover o orçamento de ' + b.name + '. Diga “sim” para confirmar.');
+        removeBudget(b.name);
+    }
+
+    /* ===================== TRANSAÇÕES: excluir / editar ===================== */
+    function cvvTxDelete(text) {
+        const nv = cvvNorm(text);
+        const list = (typeof transactions !== 'undefined' && Array.isArray(transactions)) ? transactions : [];
+        if (!list.length) { cvvSay('Não há movimentações no extrato.'); return; }
+        let tx = null;
+        if (/ultima|ultimo/.test(nv)) tx = list[0];
+        else {
+            tx = list.find(t => { const d = cvvNorm(t.desc || ''); return d.length > 2 && nv.indexOf(d) >= 0; })
+              || list.find(t => { const d = cvvNorm(t.desc || ''); return d.split(/\s+/).some(w => w.length > 3 && nv.indexOf(w) >= 0); });
+        }
+        if (!tx) { cvvSay('Não encontrei essa movimentação no extrato.'); return; }
+        cvvSay('Vou excluir a movimentação “' + (tx.desc || 'sem descrição') + '” de ' + cvvMoneyWords(Math.abs(tx.amount)) + '. Diga “sim” para confirmar.');
+        deleteTransaction(tx.id);
+    }
+
+    function cvvTxEdit(text) {
+        const nv = cvvNorm(text);
+        const list = (typeof transactions !== 'undefined' && Array.isArray(transactions)) ? transactions : [];
+        if (!list.length) { cvvSay('Não há movimentações no extrato.'); return; }
+        let tx = null;
+        if (/ultima|ultimo/.test(nv)) tx = list[0];
+        else {
+            tx = list.find(t => { const d = cvvNorm(t.desc || ''); return d.length > 2 && nv.indexOf(d) >= 0; })
+              || list.find(t => { const d = cvvNorm(t.desc || ''); return d.split(/\s+/).some(w => w.length > 3 && nv.indexOf(w) >= 0); });
+        }
+        if (!tx) { cvvSay('Não encontrei essa movimentação no extrato.'); return; }
+        editTransaction(tx.id);
+        cvvSay('Abri a movimentação “' + (tx.desc || 'sem descrição') + '” para edição. Ajuste e salve na tela.');
+    }
+
+    /* ===================== CALENDÁRIO, BUSCA E RELATÓRIOS ===================== */
+    const CVV_MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    /* nome falado → índice do mês (0-11), tolerando a forma sem acento */
+    function cvvMonthIndex(nv) {
+        for (let i = 0; i < CVV_MONTHS.length; i++) {
+            if (nv.indexOf(cvvNorm(CVV_MONTHS[i])) >= 0) return i;
+        }
+        return -1;
+    }
+
+    function cvvCalendar(text) {
+        const nv = cvvNorm(text);
+        if (/todos os meses|tudo|sem filtro/.test(nv) && typeof selectMonth === 'function') {
+            selectMonth(-1);
+            cvvSay('Mostrando todos os meses.');
+            return true;
+        }
+        if (/(proximo|seguinte)/.test(nv) && /mes/.test(nv) && typeof selectMonth === 'function') {
+            const cur = (typeof selectedMonthIndex !== 'undefined' && selectedMonthIndex >= 0) ? selectedMonthIndex : new Date().getMonth();
+            const next = Math.min(11, cur + 1);
+            selectMonth(next);
+            cvvSay('Mudando para ' + CVV_MONTHS[next] + '.');
+            return true;
+        }
+        if (/(anterior|passado)/.test(nv) && /mes/.test(nv) && typeof selectMonth === 'function') {
+            const cur = (typeof selectedMonthIndex !== 'undefined' && selectedMonthIndex >= 0) ? selectedMonthIndex : new Date().getMonth();
+            const prev = Math.max(0, cur - 1);
+            selectMonth(prev);
+            cvvSay('Mudando para ' + CVV_MONTHS[prev] + '.');
+            return true;
+        }
+        const idx = cvvMonthIndex(nv);
+        if (idx >= 0 && typeof selectMonth === 'function') {
+            selectMonth(idx);
+            cvvSay('Mostrando ' + CVV_MONTHS[idx] + '.');
+            return true;
+        }
+        if (/limpar filtro|limpar filtros|resetar|voltar ao normal/.test(nv) && typeof resetAllFilters === 'function') {
+            resetAllFilters();
+            cvvSay('Filtros limpos.');
+            return true;
+        }
+        if (/(buscar|procurar|pesquisar)/.test(nv)) {
+            let q = text;
+            ['buscar', 'procurar', 'pesquisar', 'por', 'no', 'na', 'extrato', 'movimentacoes', 'transacoes'].forEach(w => { q = cvvStrip(q, w); });
+            q = q.replace(/\s+/g, ' ').replace(/^[\s,.:;]+|[\s,.:;]+$/g, '');
+            if (!q) { cvvSay('O que você quer buscar no extrato?'); return true; }
+            const inp = cvv$('searchInput');
+            if (inp) { inp.value = q; if (typeof handleGlobalSearch === 'function') handleGlobalSearch(); }
+            const sec = document.getElementById('movimentacoes');
+            if (sec && sec.scrollIntoView) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            cvvSay('Buscando “' + q + '” no extrato.');
+            return true;
+        }
+        if (/(exportar|baixar|gerar).*(csv|planilha|extrato)|exportar csv/.test(nv)) {
+            if (typeof exportToCSV === 'function') { exportToCSV(); cvvSay('Arquivo CSV do extrato baixado.'); }
+            return true;
+        }
+        if (/imprimir|print|relatorio impresso/.test(nv)) {
+            if (typeof printReport === 'function') { printReport(); cvvSay('Abrindo a impressão do relatório.'); }
+            return true;
+        }
+        return false;
+    }
+
+    /* ===================== TEMA, PERFIL E CONTA ===================== */
+    function cvvTheme(nv) {
+        const map = [['esmerald', 'emerald'], ['verde', 'emerald'], ['violet', 'violet'], ['roxo', 'violet'], ['roxa', 'violet'], ['sol', 'sunset'], ['rosa', 'sunset'], ['laranja', 'sunset'], ['oceano', 'ocean'], ['azul', 'ocean']];
+        for (const [kw, val] of map) {
+            if (nv.indexOf(kw) >= 0 && typeof setTheme === 'function') {
+                setTheme(val);
+                cvvSay('Tema alterado.');
+                return true;
+            }
+        }
+        if (/modo escuro|escuro|dark/.test(nv) && typeof setMode === 'function') {
+            setMode('dark');
+            cvvSay('Modo escuro ativado.');
+            return true;
+        }
+        if (/modo claro|claro|light/.test(nv) && typeof setMode === 'function') {
+            setMode('light');
+            cvvSay('Modo claro ativado.');
+            return true;
+        }
+        return false;
+    }
+
+    function cvvProfile(text, nv) {
+        const m = /(meu nome e|me chame de|pode me chamar de|chame me de|meu nome e)\s+(.+)/.exec(nv);
+        if (m) {
+            let nome = m[2];
+            ['e', 'o', 'a'].forEach(w => { nome = cvvStrip(nome, w); });
+            nome = nome.replace(/\s+/g, ' ').trim();
+            if (!nome) return true;
+            /* preserva acentuação do texto original na medida possível */
+            const mOrig = /(meu nome é|me chame de|pode me chamar de|chame-me de|meu nome e)\s+(.+)/i.exec(text);
+            const nomeFinal = (mOrig ? mOrig[2] : nome).replace(/\s+/g, ' ').trim();
+            if (typeof saveProfileName === 'function' && cvv$('settingsNameInput')) {
+                cvv$('settingsNameInput').value = nomeFinal.charAt(0).toUpperCase() + nomeFinal.slice(1);
+                saveProfileName();
+                cvvSay('Pronto, vou te chamar de ' + nomeFinal + '.');
+            }
+            return true;
+        }
+        if (/(baixar|fazer|gerar|salvar).*(backup|copia)/.test(nv) && typeof exportBackup === 'function') {
+            exportBackup();
+            cvvSay('Backup baixado.');
+            return true;
+        }
+        if (/^(sair|sair da conta|deslogar|fazer logout|logout|encerrar sessao|encerrar sessão)/.test(nv) && typeof logoutCentavus === 'function') {
+            cvvSay('Saindo da conta. Até logo!');
+            setTimeout(() => { try { logoutCentavus(null); } catch (e) {} }, 350);
+            return true;
+        }
+        return false;
     }
 
     /* ===================== ROTEADOR DE COMANDOS ===================== */
@@ -772,6 +1428,9 @@
             cvvLogAdd('bot', msg); cvvSpeak(msg);
             return;
         }
+
+        /* diálogo de confirmação aberto? A voz pode confirmar/cancelar */
+        if (cvvTryConfirmVoice(nv)) return;
 
         /* silêncio */
         if (/(pare|cala|cala a boca|silencio|silenciar|nao fale|stop)/.test(nv) && !/valor/.test(nv)) {
@@ -798,11 +1457,111 @@
 
         /* notificações */
         if (/notificac|avisos|sino\b/.test(nv) && !/quanto/.test(nv)) {
+            if (/limpar|apagar|zerar/.test(nv) && typeof clearNotifs === 'function') { clearNotifs(); cvvSay('Notificações limpas.'); return; }
+            if (/marcar.*(lida|lidas)|marcar todas/.test(nv) && typeof markAllNotifsRead === 'function') { markAllNotifsRead(); cvvSay('Notificações marcadas como lidas.'); return; }
             if (typeof toggleNotifications === 'function') toggleNotifications();
             const unread = (typeof notifItems !== 'undefined' ? notifItems : []).length;
             const txt = unread ? 'Notificações abertas. Você tem ' + unread + ' avisos.' : 'Notificações abertas. Nenhuma novidade.';
             cvvLogAdd('bot', txt); cvvSpeak(txt);
             return;
+        }
+
+        /* ==================== COMANDOS COMPLETOS DO SITE ==================== */
+
+        /* tema e modo */
+        if (/(tema|modo|dark|light|escuro|claro)/.test(nv) && cvvTheme(nv)) return;
+
+        /* perfil, backup e sair */
+        if (/(meu nome|me chame|chame me|chame-me|backup|sair da conta|deslogar|logout|encerrar sessao|encerrar sessão)/.test(nv) && cvvProfile(text, nv)) return;
+
+        /* --- cofrinho --- */
+        if (/cdi/.test(nv)) {
+            if (/\d/.test(nv)) { cvvCofrinhoCdi(text); return; }
+            cvvCofrinhoStatus(); return;
+        }
+        if (/cofrinho/.test(nv)) {
+            if (/(guardar|depositar|aporte|guarda)\b/.test(nv) && /(por mes|mensal)/.test(nv)) { cvvCofrinhoMensal(text); return; }
+            if (/(guardar|depositar|aportar)/.test(nv)) { cvvCofrinhoValue(text, 'add'); return; }
+            if (/(resgatar|sacar|tirar|retirar)/.test(nv)) { cvvCofrinhoValue(text, 'remove'); return; }
+            if (/cdi/.test(nv) && /(definir|mudar|alterar|colocar|ajustar|\d)/.test(nv)) { cvvCofrinhoCdi(text); return; }
+            cvvCofrinhoStatus(); return;
+        }
+        if (/(guardar|guarda) .* (por mes|por mês|mensal)/.test(nv)) { cvvCofrinhoMensal(text); return; }
+
+        /* --- metas --- */
+        if (/meta/.test(nv)) {
+            if (/(abrir|abre|ir para|vai para|mostrar|mostra|exibir|exibe)/.test(nv) && !/(criar|cria|nova|editar|guardar|excluir|resgatar)/.test(nv)) {
+                if (cvvGoto('metas')) return;
+            }
+            if (/(criar|cria|nova|novo|adicionar|cadastrar|lancar|lançar)/.test(nv)) {
+                if (cvvAllNumbers(text).length) { cvvGoalCreate(text); }
+                else if (typeof openGoalModal === 'function') { openGoalModal(); cvvSay('Abrindo nova meta. Diga, por exemplo: “criar meta viagem com quinhentos de cinco mil”.'); }
+                return;
+            }
+            if (/(guardar|depositar|aporte|juntar)/.test(nv)) { cvvGoalValue(text, 'add'); return; }
+            if (/(resgatar|sacar|tirar)/.test(nv)) { cvvGoalValue(text, 'remove'); return; }
+            if (/(editar|ajustar|mudar|alterar|aumentar|diminuir|aumenta)/.test(nv)) { cvvGoalEdit(text); return; }
+            if (/(excluir|apagar|remover|deletar)/.test(nv)) { cvvGoalDelete(text); return; }
+            cvvGoalsList(); return;
+        }
+
+        /* --- cartões: criar / editar / excluir com dados --- */
+        if (/cart/.test(nv)) {
+            if (/(criar|cria|novo|nova|cadastrar|adicionar)/.test(nv)) {
+                if (cvvNumberAfter(text, 'limite') >= 0 && !isNaN(cvvNumberAfter(text, 'limite'))) { cvvCardCreate(text); }
+                else if (typeof openCardModal === 'function') { openCardModal(); cvvSay('Abrindo novo cartão. Diga, por exemplo: “criar cartão nubank com limite de cinco mil”.'); }
+                return;
+            }
+            if (/(editar|ajustar|mudar|alterar)/.test(nv)) { cvvCardEdit(text); return; }
+            if (/(excluir|apagar|remover|deletar)/.test(nv)) { cvvCardDelete(text); return; }
+            if (/(meus cartoes|meus cartões|lista|listar|quais|quanto tenho de limite|limites)/.test(nv)) {
+                const list = (typeof cards !== 'undefined' && Array.isArray(cards)) ? cards : [];
+                if (!list.length) { cvvSay('Você ainda não tem cartões cadastrados.'); return; }
+                if (isPrivacyHidden) { cvvSay('Valores ocultos pelo modo de privacidade. Diga “mostrar valores”.'); return; }
+                const linhas = list.map(c => c.name + ': limite de ' + cvvMoneyWords(c.limit));
+                cvvSay('Seus cartões: ' + linhas.join('. ') + '.');
+                return;
+            }
+        }
+
+        /* --- contas: criar / editar / excluir / transferir --- */
+        if (/transfer/.test(nv) || /transferir/.test(nv)) { cvvTransfer(text); return; }
+        if (/conta/.test(nv) || /(quanto tenho em|em cada conta|saldos|minhas contas)/.test(nv)) {
+            if (/(criar|cria|nova|novo|cadastrar|adicionar)/.test(nv)) {
+                if (cvvAllNumbers(text).length) { cvvAccountCreate(text); }
+                else if (typeof openAccountModal === 'function') { openAccountModal(); cvvSay('Abrindo nova conta. Diga, por exemplo: “criar conta nubank com mil e quinhentos”.'); }
+                return;
+            }
+            if (/(editar|ajustar|mudar|alterar|saldo)/.test(nv) && cvvAllNumbers(text).length) { cvvAccountEdit(text); return; }
+            if (/(excluir|apagar|remover|deletar)/.test(nv)) { cvvAccountDelete(text); return; }
+            cvvAccountsList(); return;
+        }
+
+        /* --- renda fixa --- */
+        if (/renda fixa|investimento|cdb|tesouro|lci|lca/.test(nv)) {
+            if (/(criar|cria|novo|nova|cadastrar|registrar|adicionar)/.test(nv) && cvvAllNumbers(text).length) { cvvRfCreate(text); return; }
+            if (/(excluir|apagar|remover|deletar)/.test(nv)) { cvvRfDelete(text); return; }
+            if (/(quanto rende|quanto rendeu|status|quanto recebo|rendimento|rendimentos|quanto tenho)/.test(nv)) { cvvRfStatus(); return; }
+            if (typeof openRendaFixa === 'function') { openRendaFixa(); cvvSay('Abrindo renda fixa.'); }
+            return;
+        }
+
+        /* --- orçamentos --- */
+        if (/(orcamento|orçamento|limite mensal)/.test(nv)) {
+            if (/(criar|cria|novo|nova|definir|ajustar|criar limite)/.test(nv) && cvvAllNumbers(text).length) { cvvBudgetCreate(text); return; }
+            if (/(excluir|apagar|remover|deletar)/.test(nv)) { cvvBudgetDelete(text); return; }
+            if (typeof openBudgetModal === 'function') { openBudgetModal(); cvvSay('Abrindo orçamentos.'); }
+            return;
+        }
+
+        /* --- transações: excluir / editar --- */
+        if (/(excluir|apagar|remover|deletar)/.test(nv) && /(transacao|transação|movimentacao|movimentação|ultima|ultimo|lançamento|lancamento)/.test(nv)) { cvvTxDelete(text); return; }
+        if (/(editar|ajustar|alterar)/.test(nv) && /(transacao|transação|movimentacao|movimentação|ultima|ultimo)/.test(nv)) { cvvTxEdit(text); return; }
+
+        /* --- calendário, busca e relatórios (não intercepta lançamentos) --- */
+        if (!CVV_VERBS_OUT.some(v => nv.indexOf(v) >= 0) && !CVV_VERBS_IN.some(v => nv.indexOf(v) >= 0) &&
+            /(mes|janeiro|fevereiro|marco|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro|filtro|buscar|procurar|pesquisar|csv|exportar|baixar|imprimir|print|todos os meses)/.test(nv)) {
+            if (cvvCalendar(text)) return;
         }
 
         /* resumos financeiros */
@@ -817,28 +1576,8 @@
             if (typeof openModal === 'function') { openModal(); const t = 'Abrindo nova transação.'; cvvLogAdd('bot', t); cvvSpeak(t); }
             return;
         }
-        if (/(nova|nova meta|criar meta|adicionar meta|lancar meta)/.test(nv) && /meta/.test(nv)) {
-            if (typeof openGoalModal === 'function') { openGoalModal(); const t = 'Abrindo nova meta.'; cvvLogAdd('bot', t); cvvSpeak(t); }
-            return;
-        }
-        if (/(novo|adicionar|cadastrar|criar).*(cartao)/.test(nv)) {
-            if (typeof openCardModal === 'function') { openCardModal(); const t = 'Abrindo novo cartão.'; cvvLogAdd('bot', t); cvvSpeak(t); }
-            return;
-        }
-        if (/(nova|novo|adicionar|cadastrar|criar).*(conta)/.test(nv)) {
-            if (typeof openAccountModal === 'function') { openAccountModal(); const t = 'Abrindo nova conta.'; cvvLogAdd('bot', t); cvvSpeak(t); }
-            return;
-        }
         if (/(nova|novo|fazer|fazer transferencia|transferencia)/.test(nv) && /transfer/.test(nv)) {
             if (typeof openTransferModal === 'function') { openTransferModal(); const t = 'Abrindo transferência.'; cvvLogAdd('bot', t); cvvSpeak(t); }
-            return;
-        }
-        if (/(novo|nova|criar|definir|editar).*(orcamento|limite)/.test(nv)) {
-            if (typeof openBudgetModal === 'function') { openBudgetModal(); const t = 'Abrindo orçamentos.'; cvvLogAdd('bot', t); cvvSpeak(t); }
-            return;
-        }
-        if (/renda fixa|investimento|cdb|tesouro/.test(nv)) {
-            if (typeof openRendaFixa === 'function') { openRendaFixa(); const t = 'Abrindo renda fixa.'; cvvLogAdd('bot', t); cvvSpeak(t); }
             return;
         }
         if (/configurac|minha conta|meu perfil|perfil/.test(nv)) {
