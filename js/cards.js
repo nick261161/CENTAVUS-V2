@@ -504,6 +504,8 @@
         function openCardModal(id){
             cardEditId = (id && cardById(id)) ? id : null;
             const editing = !!cardEditId;
+            /* limite do plano Grátis: só na CRIAÇÃO */
+            if (!editing && typeof cvGate === 'function' && !cvGate('cartoes')) { cardEditId = null; return; }
             const c = editing ? cardById(cardEditId) : null;
             const title = document.getElementById('cardModalTitle');
             if (title) title.innerHTML = '<i class="fa-solid fa-credit-card text-[#40C8A0]"></i> ' + (editing ? 'Editar cartão' : 'Novo cartão');
@@ -600,6 +602,8 @@
             if (isNaN(fatura) || fatura < 0) { showCardError('Informe a fatura atual (use 0 se não houver).'); g('cardFatura').focus(); return; }
             if (fatura > 0 && limit > 0 && fatura > limit) { showCardError('A fatura não pode ser maior que o limite.'); g('cardFatura').focus(); return; }
             if (isNaN(closeDay) || closeDay < 1 || closeDay > 28 || isNaN(dueDay) || dueDay < 1 || dueDay > 28) { showCardError('Os dias de fechamento e vencimento vão de 1 a 28.'); return; }
+            /* limite do plano Grátis na criação */
+            if (!cardEditId && typeof cvGate === 'function' && !cvGate('cartoes')) return;
 
             const data = { name: name, brand: brand, last4: last4 || '0000', limit: round2(limit), fatura: round2(fatura), closeDay: closeDay, dueDay: dueDay };
             const cor = (cardColorSel && cardColorSel[0]) ? cardColorSel : cardColorGet();

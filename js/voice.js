@@ -26,6 +26,8 @@
     let cvvRec = null, cvvListening = false, cvvVoice = null, cvvInited = false, cvvDeniedLogged = false;
     let cvvMode = 'command';                /* 'command' (FAB) | 'dictation' (mic do campo de texto) */
     let cvvStream = null;
+    /* captura de respostas (usada pelo Centavus Zap) + mute do falante */
+    let cvvCaptureHook = null, cvvMute = false;
 
     /* ===================== UTIL ===================== */
     function cvv$(id) { return document.getElementById(id); }
@@ -45,6 +47,7 @@
 
     /* fala com voz pt-BR, se disponível */
     function cvvSpeak(text) {
+        if (cvvMute) return;                 /* modo Zap: só texto, sem falar */
         if (!('speechSynthesis' in window)) return;
         try {
             window.speechSynthesis.cancel();
@@ -80,6 +83,7 @@
         cvvLog.appendChild(row);
         while (cvvLog.children.length > 24) cvvLog.removeChild(cvvLog.firstChild);
         cvvLog.scrollTop = cvvLog.scrollHeight;
+        if (cvvCaptureHook) cvvCaptureHook(who, text);
     }
 
     function cvvSetStatus(text, listening) {
@@ -254,7 +258,7 @@
 
         const chipsWrap = document.createElement('div');
         chipsWrap.className = 'cvv-chips';
-        ['Abrir cartões', 'Paguei a fatura do Nubank', 'Gastei 45 reais no almoço', 'Criar meta viagem com 500 de 5000', 'Guardar 200 no cofrinho', 'Transferir 100 da poupança para a corrente', 'Quanto tenho em cada conta?', 'Ajuda'].forEach(c => {
+        ['Abrir cartões', 'Paguei a fatura do Nubank', 'Gastei 45 reais no almoço', 'Criar meta viagem com 500 de 5000', 'Guardar 200 no cofrinho', 'Transferir 100 da poupança para a corrente', 'Quanto tenho em cada conta?', 'Abrir Zap', 'Ver planos', 'Ajuda'].forEach(c => {
             const chip = document.createElement('button');
             chip.type = 'button';
             chip.className = 'cvv-chip';
@@ -748,15 +752,16 @@
         { keys: ['contas', 'account'], section: 'contas' },
         { keys: ['cofrinho', 'poupanca', 'reserva'], section: 'cofrinho' },
         { keys: ['metas', 'objetivos', 'goal'], section: 'metas' },
-        { keys: ['relatorios', 'analise', 'relatorio', 'graficos', 'reports'], section: 'relatorios' }
+        { keys: ['relatorios', 'analise', 'relatorio', 'graficos', 'reports'], section: 'relatorios' },
+        { keys: ['zap', 'whatsapp', 'centavus zap'], section: 'zap' }
     ];
 
     function cvvGoto(section) {
         if (typeof setActiveNav === 'function') {
             setActiveNav(null, section);
-            const txt = 'Abrindo ' + section + '.';
+            const txt = 'Abrindo ' + (section === 'zap' ? 'Centavus Zap' : section) + '.';
             cvvLogAdd('bot', txt);
-            cvvSpeak('Abrindo ' + (section === 'relatorios' ? 'relatórios' : section) + '.');
+            cvvSpeak(txt);
             return true;
         }
         return false;
@@ -769,9 +774,49 @@
             '“excluir meta viagem” e depois “sim”, “criar cartão nubank com limite de cinco mil”, “transferir cem da poupança para a corrente”, ' +
             '“quanto tenho no cofrinho”, “definir CDI treze”, “criar renda fixa cdb de mil por doze meses”, ' +
             '“criar orçamento alimentação com oitocentos”, “quanto gastei este mês”, “próximo mês”, “buscar mercado”, ' +
-            '“exportar csv”, “tema violeta”, “modo escuro”, “meu nome é João”, “limpar notificações” ou “baixar backup”.';
+            '“exportar csv”, “tema violeta”, “modo escuro”, “meu nome é João”, “limpar notificações”, “baixar backup”, ' +
+            '“ver planos”, “meu plano”, “ativar código”, “abrir zap” ou “testar premium”.';
         cvvLogAdd('bot', txt);
-        cvvSpeak('Posso lançar gastos, pagar faturas, criar metas, cartões, contas, cofrinho, renda fixa e orçamentos, transferir, abrir telas e resumir suas finanças. Veja os exemplos na tela.');
+        cvvSpeak('Posso lançar gastos, pagar faturas, criar metas, cartões, contas, cofrinho, renda fixa e orçamentos, transferir, abrir telas, resumir suas finanças e até mostrar os planos. Veja os exemplos na tela.');
+    }
+
+    /* ===================== PLANOS E ATIVAÇÃO ===================== */
+    function cvvPlans(text, nv) {
+        /* meu plano / uso atual */
+        if (/meu plano|qual meu plano|plano atual|status do plano/.test(nv)) {
+            const plano = (typeof cvPlanoAtual === 'function') ? cvPlanoAtual() : 'free';
+            const nome = plano === 'premium' ? (cvPlanoLeia().plano === 'trial' ? 'Premium (teste de 7 dias)' : 'Premium') : plano === 'pro' ? 'Pro' : 'Grátis';
+            let m = 'Seu plano atual é ' + nome + '.';
+            if (plano === 'free' && typeof cvQuotaUsada === 'function') {
+                m += ' Você já usou ' + cvQuotaUsada('voz') + ' de ' + cvQuotaMax('voz') + ' comandos de voz hoje.';
+            }
+            cvvSay(m);
+            return;
+        }
+        /* ativar com código */
+        if (/ativar|codigo|código/.test(nv)) {
+            const cod = (String(text).toUpperCase().match(/CV-[A-Z0-9]+-[A-Z0-9]+-\d+-[A-Z0-9]+/) || [])[0];
+            if (cod && typeof cvAtivarCodigo === 'function') {
+                const ok = cvAtivarCodigo(cod);
+                cvvSay(ok ? 'Código aceito! Plano ativado, pode usar sem limite.' : 'Esse código não passou na validação. Confira a mensagem do pagamento.');
+            } else {
+                if (typeof cvAbrirPlanos === 'function') cvAbrirPlanos();
+                cvvSay('Abri os planos para você. Cole seu código de ativação no campo para liberar, ou escolha um plano.');
+            }
+            return;
+        }
+        /* teste grátis */
+        if (/testar|teste|\btrial\b|gratuito por/.test(nv)) {
+            if (typeof cvIniciarTrial === 'function' && cvIniciarTrial()) {
+                cvvSay('Premium liberado por sete dias. Pode usar tudo, sem limite.');
+            }
+            return;
+        }
+        /* abrir o Zap */
+        if (/zap|whatsapp/.test(nv)) { cvvGoto('zap'); return; }
+        /* ver planos */
+        if (typeof cvAbrirPlanos === 'function') cvAbrirPlanos();
+        cvvSay('Os planos são: Grátis, com tudo do Centavus e 30 comandos por dia; Pro por 19,90 reais por mês, com 150 comandos, 10 metas, 6 contas, 5 cartões e exportação; e Premium por 39,90 reais, tudo sem limite. Diga “ativar código” ou “testar premium”.');
     }
 
     /* ===================== TODAS AS FUNÇÕES DO SITE ===================== */
@@ -1445,6 +1490,18 @@
             cvvHelp(); return;
         }
 
+        /* limite diário do plano (voz) — comandos de plano/ativação são livres
+           e o Zap já cobra a cota própria dele */
+        if (typeof cvQuotaUsar === 'function' && typeof cvQuotaLivre === 'function' && !window.__cvZapAtivo && !cvQuotaLivre(nv)) {
+            if (!cvQuotaUsar('voz')) {
+                const m = 'Você atingiu o limite de comandos de voz do plano Grátis hoje. O Pro custa 19,90 reais por mês e libera 150 por dia. Diga “ver planos” que eu abro para você.';
+                cvvLogAdd('bot', m);
+                cvvSpeak(m);
+                if (typeof cvAbrirPlanos === 'function') cvAbrirPlanos();
+                return;
+            }
+        }
+
         /* privacidade */
         if (/(mostrar|exibir|liberar|revelar).*(valores|numeros|saldos)/.test(nv)) {
             if (typeof togglePrivacyMode === 'function' && isPrivacyHidden) togglePrivacyMode();
@@ -1467,6 +1524,12 @@
         }
 
         /* ==================== COMANDOS COMPLETOS DO SITE ==================== */
+
+        /* --- planos, assinatura e ativação (sempre livres, sem cota) --- */
+        if (/(plano|assinatura|premium|\bpro\b|quanto custa|ativar|codigo|testar|\btrial\b|zap|whatsapp)/.test(nv)) {
+            cvvPlans(text, nv);
+            return;
+        }
 
         /* tema e modo */
         if (/(tema|modo|dark|light|escuro|claro)/.test(nv) && cvvTheme(nv)) return;
@@ -1636,12 +1699,33 @@
                 if (tag !== 'INPUT' && tag !== 'TEXTAREA') cvvHide();
             }
         });
+
+        /* bloqueio por limite do plano: fala o aviso quando veio do microfone
+           (o Zap mostra no chat; cliques comuns já recebem o toast) */
+        document.addEventListener('cv:gate', (ev) => {
+            if (window.__cvZapAtivo) return;
+            const msg = ev.detail && ev.detail.message;
+            if (!msg) return;
+            if (cvvPanel && !cvvPanel.classList.contains('cvv-hidden')) cvvSay(msg);
+        });
     }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', cvvBoot);
     else cvvBoot();
 
+    /* roda um comando SEM falar (voz desligada) e devolve as respostas do bot —
+       é o que o Centavus Zap usa como "chat" */
+    function cvvAskCapture(text) {
+        const out = [];
+        const prevHook = cvvCaptureHook;
+        const prevMute = cvvMute;
+        cvvMute = true;
+        cvvCaptureHook = (who, t) => { if (who === 'bot') out.push(t); };
+        try { cvvRun(text); } finally { cvvCaptureHook = prevHook; cvvMute = prevMute; }
+        return out;
+    }
+
     /* expõe o que a UI externa pode precisar */
-    window.cvVoice = { open: cvvShow, hide: cvvHide, run: cvvRun, speak: cvvSpeak };
+    window.cvVoice = { open: cvvShow, hide: cvvHide, run: cvvRun, speak: cvvSpeak, ask: cvvAskCapture };
 
 })();

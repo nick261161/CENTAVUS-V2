@@ -368,6 +368,8 @@
            ========================================================================== */
 
         function exportToCSV() {
+            /* recurso dos planos pagos (Pro/Premium) */
+            if (typeof cvGateBool === 'function' && !cvGateBool('exportar')) return;
             /* escape de aspas/quebras de linha + BOM: sem isso o Excel corrompia o arquivo
                (acentos errados e linhas partidas com desc que contenha " ou quebra) */
             const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
@@ -389,6 +391,8 @@
         }
 
         function printReport() {
+            /* recurso dos planos pagos (Pro/Premium) */
+            if (typeof cvGateBool === 'function' && !cvGateBool('exportar')) return;
             window.print();
         }
 

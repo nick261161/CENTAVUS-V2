@@ -190,6 +190,9 @@
                 return;
             }
 
+            /* limite do plano Grátis na criação */
+            if (typeof cvGate === 'function' && !cvGate('metas')) return;
+
             const idx = goals.length;
             const goal = {
                 id: goalSeq++,

@@ -178,6 +178,8 @@ function showAccountError(msg){
 function openAccountModal(id){
     accountEditId = id != null && id !== '' ? id : null;
     const editing = accountEditId != null;
+    /* limite do plano Grátis: só na CRIAÇÃO */
+    if (!editing && typeof cvGate === 'function' && !cvGate('contas')) { accountEditId = null; return; }
     const acc = editing ? accountById(accountEditId) : null;
     if (editing && !acc) return;
 
@@ -212,6 +214,8 @@ function handleAccountSubmit(event){
     if (name.length < 2) { showAccountError('Dê um nome para a conta (mínimo de 2 caracteres).'); return; }
     if (name.length > 40) { showAccountError('O nome pode ter no máximo 40 caracteres.'); return; }
     if (isNaN(initial)) { showAccountError('Informe o saldo da conta (use 0 se for novo).'); return; }
+    /* limite do plano Grátis na criação */
+    if (accountEditId == null && typeof cvGate === 'function' && !cvGate('contas')) return;
 
     if (accountEditId != null) {
         const acc = accountById(accountEditId);

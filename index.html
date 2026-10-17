@@ -24,6 +24,7 @@
     <link rel="stylesheet" href="css/dashboard.css">
     <link rel="stylesheet" href="css/theme.css">
     <link rel="stylesheet" href="css/voice.css">
+    <link rel="stylesheet" href="css/premium.css">
     <script src="js/theme-boot.js"></script>
 </head>
 <body class="min-h-screen flex flex-col pb-16 md:pb-0">
@@ -284,6 +285,12 @@
                 <span class="hidden lg:inline">Nova Transação</span>
             </button>
 
+            <!-- PLANOS (badge do plano) -->
+            <button onclick="cvAbrirPlanos()" title="Planos e assinatura" aria-label="Ver planos do Centavus" class="flex items-center gap-2 h-10 px-3 rounded-xl bg-[#203030] hover:bg-[#304040] border border-[#FFD166]/25 text-[#FFD166] hover:text-[#FFE29A] transition shrink-0">
+                <i class="fa-solid fa-crown text-sm"></i>
+                <span id="cvPlanPill" class="text-[10px] font-extrabold uppercase tracking-wider">Grátis</span>
+            </button>
+
             <!-- Notifications Center Toggle -->
             <div class="relative">
                 <button onclick="toggleNotifications()" class="w-10 h-10 rounded-xl bg-[#203030] hover:bg-[#204040] text-[#A8B5B2] hover:text-white flex items-center justify-center transition border border-white/5 relative" title="Notificações" aria-label="Notificações">
@@ -375,10 +382,18 @@
                     <i class="fa-solid fa-piggy-bank text-lg w-6 text-center"></i>
                     <span class="text-sm font-semibold opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">Cofrinho (CDI)</span>
                 </a>
+                <a href="#" data-section="zap" onclick="setActiveNav(this, 'zap');return false;" class="nav-item flex items-center gap-4 px-3.5 py-3.5">
+                    <i class="fa-brands fa-whatsapp text-lg w-6 text-center text-[#40C8A0]"></i>
+                    <span class="text-sm font-semibold opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">Centavus Zap</span>
+                </a>
             </div>
 
-            <!-- RODAPÉ DA BARRA LATERAL: Configurações -->
+            <!-- RODAPÉ DA BARRA LATERAL: Planos + Configurações -->
             <div class="px-3">
+                <a href="#" data-section="planos" onclick="setActiveNav(this, 'planos');return false;" class="nav-item flex items-center gap-4 px-3.5 py-3.5">
+                    <i class="fa-solid fa-crown text-lg w-6 text-center text-[#FFD166]"></i>
+                    <span class="text-sm font-semibold opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">Planos</span>
+                </a>
                 <a href="#" data-section="config" onclick="setActiveNav(this, 'config');return false;" class="nav-item flex items-center gap-4 px-3.5 py-3.5">
                     <i class="fa-solid fa-gear text-lg w-6 text-center"></i>
                     <span class="text-sm font-semibold opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">Configurações</span>
@@ -1013,6 +1028,47 @@
                 </div>
             </section>
 
+            <!-- CENTAVUS ZAP — assistente no estilo WhatsApp -->
+            <section id="secZap" class="cv-reveal centavus-card">
+                <div class="zap-head">
+                    <div class="zap-avatar"><i class="fa-brands fa-whatsapp"></i></div>
+                    <div class="min-w-0">
+                        <h2 class="zap-title">Centavus Zap</h2>
+                        <p class="zap-sub"><span class="zap-dot"></span> Assistente on-line · registra na hora</p>
+                    </div>
+                    <button type="button" class="zap-plan-btn" onclick="cvAbrirPlanos()"><i class="fa-solid fa-crown"></i> <span id="zapPlanTag">Grátis</span></button>
+                </div>
+
+                <div id="zapMsgs" class="zap-msgs" aria-live="polite" aria-label="Conversa com o Zap"></div>
+                <div id="zapChips" class="zap-chips"></div>
+                <form id="zapForm" class="zap-form" autocomplete="off">
+                    <input type="text" id="zapInput" placeholder="Digite um comando: “gastei 50 reais no almoço”…" aria-label="Comando do Zap">
+                    <button type="submit" class="zap-send" aria-label="Enviar comando"><i class="fa-solid fa-paper-plane"></i></button>
+                </form>
+
+                <div class="zap-grid">
+                    <div class="zap-box">
+                        <h3><i class="fa-solid fa-bolt"></i> Comandos rápidos no WhatsApp</h3>
+                        <p>Abre seu WhatsApp com a mensagem pronta — é só tocar em enviar. Funciona sem servidor.</p>
+                        <div id="zapQcmds" class="zap-qcmds"></div>
+                    </div>
+                    <div class="zap-box">
+                        <h3><i class="fa-solid fa-mobile-screen-button"></i> Meu número</h3>
+                        <p>Com o número salvo, os comandos abrem direto na conversa certa (com você mesmo ou de outro aparelho).</p>
+                        <div class="zap-num-row">
+                            <input type="tel" id="zapNumInput" placeholder="55 11 99999-0000" aria-label="Seu número com DDI e DDD">
+                            <button type="button" id="zapNumSave">Salvar</button>
+                        </div>
+                        <button type="button" id="zapOpenBtn" class="zap-open-btn"><i class="fa-brands fa-whatsapp mr-1"></i> Abrir meu WhatsApp</button>
+                    </div>
+                    <div class="zap-box">
+                        <h3><i class="fa-solid fa-robot"></i> Bot automático no seu número</h3>
+                        <p>O Zap já funciona aqui dentro, com os mesmos comandos do assistente de voz. O próximo passo é ligar seu número à API oficial da Meta (WhatsApp Cloud API), para você mandar os comandos pelo aplicativo e eles caírem aqui.</p>
+                        <span class="zap-soon">Em breve no seu número</span>
+                    </div>
+                </div>
+            </section>
+
         </main>
     </div>
 
@@ -1045,6 +1101,10 @@
         <a href="#" data-section="cofrinho" onclick="setActiveNav(this, 'cofrinho');return false;" class="mobile-nav-item flex flex-col items-center gap-1 text-[10px] min-w-0">
             <i class="fa-solid fa-piggy-bank text-base"></i>
             <span>Cofrinho</span>
+        </a>
+        <a href="#" data-section="zap" onclick="setActiveNav(this, 'zap');return false;" class="mobile-nav-item flex flex-col items-center gap-1 text-[10px] min-w-0">
+            <i class="fa-brands fa-whatsapp text-base text-[#40C8A0]"></i>
+            <span>Zap</span>
         </a>
         <a href="#" data-section="config" onclick="setActiveNav(this, 'config');return false;" class="mobile-nav-item flex flex-col items-center gap-1 text-[10px] min-w-0">
             <i class="fa-solid fa-gear text-base"></i>
@@ -1626,5 +1686,7 @@
     <script src="js/ui.js"></script>
     <script src="js/rendaFixa.js"></script>
     <script src="js/voice.js"></script>
+    <script src="js/premium.js"></script>
+    <script src="js/zap.js"></script>
 </body>
 </html>

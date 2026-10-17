@@ -42,6 +42,8 @@
 
         function openGoalModal(goal) {
             const editing = !!goal;
+            /* limite do plano Grátis: só na CRIAÇÃO (edita/exclui quem já tem) */
+            if (!editing && typeof cvGate === 'function' && !cvGate('metas')) return;
             goalModalMode = editing ? 'edit' : 'create';
             goalEditId = editing ? goal.id : null;
             document.getElementById('goalModalTitle').textContent = editing ? 'Editar Meta' : 'Nova Meta Financeira';

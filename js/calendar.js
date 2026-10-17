@@ -293,6 +293,11 @@
                 openSettings();
                 return false;
             }
+            // Planos abre o modal de assinatura (não troca de seção)
+            if (section === 'planos') {
+                if (typeof cvAbrirPlanos === 'function') cvAbrirPlanos();
+                return false;
+            }
 
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.mobile-nav-item').forEach(el => el.classList.remove('active'));
@@ -305,7 +310,8 @@
                 contas: 'secContas',
                 cofrinho: 'secCofrinho',
                 metas: 'secMetas',
-                relatorios: 'secRelatorios'
+                relatorios: 'secRelatorios',
+                zap: 'secZap'
             };
             const target = document.getElementById(targets[section]);
             if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
